@@ -7,9 +7,9 @@ import AgentLogStream from "@/components/AgentLogStream";
 import HitlInteractionPanel from "@/components/HitlInteractionPanel";
 import { useHelixSocket } from "@/hooks/useHelixSocket";
 import { useHelixStore } from "@/store/helixStore";
-import { Play, SquareSquare, GitBranch } from "lucide-react";
+import { Play, SquareSquare, GitBranch, Code2 } from "lucide-react";
 
-export default function Home() {
+export default function Pillar2Page() {
   const { isConnected, startPipeline } = useHelixSocket();
   const { pendingCheckpoints, currentStage, activeAgent } = useHelixStore();
   
@@ -30,6 +30,7 @@ export default function Home() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+            <Code2 className="w-6 h-6 text-blue-400" />
             Engineering Workforce <span className="text-sm font-normal px-2 py-0.5 rounded bg-blue-500/20 text-blue-400">Pillar 2</span>
           </h1>
           <p className="text-slate-400 text-sm mt-1">Autonomous coding agents orchestrated by Strands.</p>
