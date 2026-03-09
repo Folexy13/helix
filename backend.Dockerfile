@@ -21,4 +21,4 @@ COPY src/ ./src/
 EXPOSE 8000
 
 # Run FastAPI server
-CMD ["uvicorn", "src.api:socket_app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "src.api_main:socket_app", "--host", "0.0.0.0", "--port", "8000"]

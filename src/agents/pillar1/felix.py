@@ -6,6 +6,11 @@ Uses Nova 2 Lite's built-in web grounding tool to pull live pricing data
 (cloud costs, API costs, SaaS tool costs).
 
 Gives a realistic financial picture grounded in real numbers.
+
+NOW ENHANCED WITH:
+- Real web grounding via WebGroundingTool for live pricing data
+- AWS pricing lookups
+- SaaS and API cost research
 """
 
 import logging
@@ -13,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from src.agents.base import AgentContext, AgentResponse, BaseAgent, Tool
 from src.core.models import AgentRole, HITLDecision, HITLGateType, ReasoningEffort
+from src.tools.advanced_tools import WebGroundingTool, get_tool_registry
 
 logger = logging.getLogger(__name__)
 
@@ -53,17 +59,20 @@ class FelixAgent(BaseAgent):
     """
     FELIX - CFO Agent for financial analysis.
     
-    Uses web grounding for live pricing data.
+    Uses web grounding for live pricing data via WebGroundingTool.
     """
     
     def __init__(self):
         super().__init__(
             role=AgentRole.FELIX,
             name="FELIX",
-            description="CFO Agent - Financial projections and cost analysis expert",
+            description="CFO Agent - Financial projections and cost analysis expert with live web data",
             system_prompt=FELIX_SYSTEM_PROMPT,
             reasoning_effort=ReasoningEffort.MEDIUM,
         )
+        
+        # Initialize web grounding tool for live pricing
+        self._web_grounding = WebGroundingTool()
         
         # Register FELIX-specific tools
         self._register_felix_tools()
@@ -142,45 +151,91 @@ class FelixAgent(BaseAgent):
         category: str,
     ) -> Dict[str, Any]:
         """
-        Search for pricing information using web grounding.
+        Search for pricing information using REAL web grounding.
         
-        In production, this would use Nova 2 Lite's built-in web grounding.
-        For now, we return realistic pricing data.
+        Uses Nova 2 Lite's built-in web grounding via WebGroundingTool
+        to fetch live, current pricing data from the web.
         """
-        # Simulated pricing data (in production, this uses web grounding)
+        try:
+            # Use the real web grounding tool for live data
+            if category == "cloud":
+                result = await self._web_grounding.get_aws_pricing(query)
+            elif category == "api":
+                result = await self._web_grounding.get_api_pricing(query)
+            elif category == "saas":
+                result = await self._web_grounding.get_saas_pricing(query)
+            else:
+                result = await self._web_grounding.execute(
+                    query=f"{query} pricing cost",
+                    category="pricing",
+                    recency="month",
+                )
+            
+            if result.success:
+                return {
+                    "query": query,
+                    "category": category,
+                    "results": result.output.get("results", ""),
+                    "sources": result.output.get("sources", []),
+                    "live_data": True,
+                    "execution_time": result.execution_time,
+                }
+            else:
+                # Fallback to cached data if web grounding fails
+                logger.warning(f"Web grounding failed, using fallback: {result.error}")
+                return await self._get_fallback_pricing(query, category)
+                
+        except Exception as e:
+            logger.error(f"Web search pricing error: {e}")
+            return await self._get_fallback_pricing(query, category)
+    
+    async def _get_fallback_pricing(
+        self,
+        query: str,
+        category: str,
+    ) -> Dict[str, Any]:
+        """
+        Fallback pricing data when web grounding is unavailable.
+        """
+        # Cached pricing data as fallback
         pricing_data = {
             "cloud": {
-                "aws_ec2_t3_medium": {"price": 0.0416, "unit": "per hour", "source": "AWS Pricing"},
-                "aws_rds_postgres": {"price": 0.095, "unit": "per hour", "source": "AWS Pricing"},
-                "aws_s3": {"price": 0.023, "unit": "per GB/month", "source": "AWS Pricing"},
-                "vercel_pro": {"price": 20, "unit": "per month", "source": "Vercel Pricing"},
+                "aws_ec2_t3_medium": {"price": 0.0416, "unit": "per hour", "source": "AWS Pricing (cached)"},
+                "aws_rds_postgres": {"price": 0.095, "unit": "per hour", "source": "AWS Pricing (cached)"},
+                "aws_s3": {"price": 0.023, "unit": "per GB/month", "source": "AWS Pricing (cached)"},
+                "aws_lambda": {"price": 0.0000166667, "unit": "per GB-second", "source": "AWS Pricing (cached)"},
+                "aws_bedrock_nova_lite": {"price": 0.00006, "unit": "per 1K input tokens", "source": "AWS Pricing (cached)"},
+                "vercel_pro": {"price": 20, "unit": "per month", "source": "Vercel Pricing (cached)"},
             },
             "api": {
-                "openai_gpt4": {"price": 0.03, "unit": "per 1K tokens", "source": "OpenAI Pricing"},
-                "stripe": {"price": 2.9, "unit": "% + $0.30 per transaction", "source": "Stripe Pricing"},
-                "twilio_sms": {"price": 0.0079, "unit": "per message", "source": "Twilio Pricing"},
-                "sendgrid": {"price": 19.95, "unit": "per month (40K emails)", "source": "SendGrid Pricing"},
+                "openai_gpt4": {"price": 0.03, "unit": "per 1K tokens", "source": "OpenAI Pricing (cached)"},
+                "anthropic_claude": {"price": 0.015, "unit": "per 1K tokens", "source": "Anthropic Pricing (cached)"},
+                "stripe": {"price": 2.9, "unit": "% + $0.30 per transaction", "source": "Stripe Pricing (cached)"},
+                "twilio_sms": {"price": 0.0079, "unit": "per message", "source": "Twilio Pricing (cached)"},
+                "sendgrid": {"price": 19.95, "unit": "per month (40K emails)", "source": "SendGrid Pricing (cached)"},
             },
             "saas": {
-                "slack_business": {"price": 12.50, "unit": "per user/month", "source": "Slack Pricing"},
-                "github_team": {"price": 4, "unit": "per user/month", "source": "GitHub Pricing"},
-                "notion_team": {"price": 10, "unit": "per user/month", "source": "Notion Pricing"},
-                "linear": {"price": 8, "unit": "per user/month", "source": "Linear Pricing"},
+                "slack_business": {"price": 12.50, "unit": "per user/month", "source": "Slack Pricing (cached)"},
+                "github_team": {"price": 4, "unit": "per user/month", "source": "GitHub Pricing (cached)"},
+                "notion_team": {"price": 10, "unit": "per user/month", "source": "Notion Pricing (cached)"},
+                "linear": {"price": 8, "unit": "per user/month", "source": "Linear Pricing (cached)"},
+                "figma_professional": {"price": 15, "unit": "per editor/month", "source": "Figma Pricing (cached)"},
             },
             "infrastructure": {
-                "domain": {"price": 12, "unit": "per year", "source": "Average"},
+                "domain": {"price": 12, "unit": "per year", "source": "Average (cached)"},
                 "ssl_certificate": {"price": 0, "unit": "free with Let's Encrypt", "source": "Let's Encrypt"},
-                "monitoring_datadog": {"price": 15, "unit": "per host/month", "source": "Datadog Pricing"},
+                "monitoring_datadog": {"price": 15, "unit": "per host/month", "source": "Datadog Pricing (cached)"},
             },
         }
         
-        category_data = pricing_data.get(category, pricing_data["general"] if "general" in pricing_data else {})
+        category_data = pricing_data.get(category, {})
         
         return {
             "query": query,
             "category": category,
             "results": category_data,
-            "note": "Prices are approximate and may vary. Always verify with official sources.",
+            "live_data": False,
+            "note": "Using cached pricing data. Live web grounding unavailable.",
             "last_updated": "2026-03",
         }
     

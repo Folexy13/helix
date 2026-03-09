@@ -4,13 +4,18 @@ WORKDIR /app
 
 # Set build-time environment variables for Next.js
 ARG NEXT_PUBLIC_SOCKET_URL=http://localhost:8000
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies with retry and increased timeout
+RUN npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 60000 && \
+    npm config set fetch-retry-maxtimeout 300000 && \
+    npm ci || npm ci || npm ci
 
 # Copy source code
 COPY . .

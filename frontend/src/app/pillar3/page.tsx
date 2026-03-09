@@ -1,22 +1,27 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useHelixSocket } from "@/hooks/useHelixSocket";
 import { useHelixStore } from "@/store/helixStore";
 import AgentLogStream from "@/components/AgentLogStream";
+import { fileSystemService, FileEntry } from "@/services/FileSystemService";
 import { 
-  Play, 
   Database, 
   Loader2, 
   Send,
   Mic,
-  Search,
   FolderTree,
   GitBranch,
   FileQuestion,
   Brain,
-  Upload,
   Link,
+  FolderOpen,
+  RefreshCw,
+  CheckCircle,
+  File,
+  Folder,
+  Upload,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -32,16 +37,30 @@ const QUICK_QUESTIONS = [
 
 export default function Pillar3Page() {
   const { isConnected, startPipeline, sendUserMessage } = useHelixSocket();
-  const { currentStage, stageDescription, activeAgent, pipelineProgress, isProcessing } = useHelixStore();
+  const { currentStage, stageDescription, activeAgent, pipelineProgress, isProcessing, workspace } = useHelixStore();
   
   const [questionInput, setQuestionInput] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
   const [isRepoConnected, setIsRepoConnected] = useState(false);
+  const [isLocalConnected, setIsLocalConnected] = useState(false);
+  const [localFiles, setLocalFiles] = useState<FileEntry[]>([]);
+  const [isIndexing, setIsIndexing] = useState(false);
+  const [indexedCount, setIndexedCount] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Check if local workspace is available
+  const hasLocalWorkspace = useMemo(() => {
+    return !!fileSystemService.getRootHandle() || !!workspace;
+  }, [workspace]);
 
   useEffect(() => {
     inputRef.current?.focus();
-  }, []);
+    // Auto-connect if workspace is available
+    if (hasLocalWorkspace && !isLocalConnected) {
+      handleConnectLocal();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasLocalWorkspace]);
 
   const handleAsk = () => {
     if (questionInput.trim()) {
@@ -58,14 +77,73 @@ export default function Pillar3Page() {
   const handleConnectRepo = () => {
     if (repoUrl.trim()) {
       setIsRepoConnected(true);
+      setIsLocalConnected(false);
     }
   };
+
+  const handleConnectLocal = useCallback(async () => {
+    try {
+      setIsIndexing(true);
+      setIndexedCount(0);
+      
+      // If no handle, try to open folder picker
+      if (!fileSystemService.getRootHandle()) {
+        const handle = await fileSystemService.openFolderPicker();
+        if (!handle) {
+          setIsIndexing(false);
+          return;
+        }
+      }
+
+      // Read the file tree
+      const files = await fileSystemService.readWorkspace();
+      setLocalFiles(files);
+      
+      // Count files for indexing progress
+      const countFiles = (entries: FileEntry[]): number => {
+        return entries.reduce((count, entry) => {
+          if (entry.type === 'file') return count + 1;
+          if (entry.children) return count + countFiles(entry.children);
+          return count;
+        }, 0);
+      };
+      
+      setIndexedCount(countFiles(files));
+      setIsLocalConnected(true);
+      setIsRepoConnected(false);
+    } catch (error) {
+      console.error('Failed to connect local folder:', error);
+    } finally {
+      setIsIndexing(false);
+    }
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent, action: () => void) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       action();
     }
+  };
+
+  // Render file tree recursively
+  const renderFileTree = (entries: FileEntry[], depth: number = 0) => {
+    if (depth > 3) return null; // Limit depth for performance
+    
+    return entries.slice(0, 20).map((entry) => (
+      <div key={entry.path} style={{ paddingLeft: `${depth * 12}px` }}>
+        <div className="flex items-center gap-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-300">
+          {entry.type === 'directory' ? (
+            <Folder className="w-3 h-3 text-amber-400" />
+          ) : (
+            <File className="w-3 h-3 text-slate-500" />
+          )}
+          <span className="truncate">{entry.name}</span>
+        </div>
+        {entry.type === 'directory' && entry.children && (
+          renderFileTree(entry.children, depth + 1)
+        )}
+      </div>
+    ));
   };
 
   return (
@@ -113,17 +191,49 @@ export default function Pillar3Page() {
           {/* Repository Connection */}
           <div className="p-4 border-b border-slate-800">
             <h2 className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em] mb-3">
-              Repository
+              Codebase Source
             </h2>
             
-            {!isRepoConnected ? (
+            {!isRepoConnected && !isLocalConnected ? (
               <div className="space-y-3">
+                {/* Local Folder Option */}
+                <button
+                  onClick={handleConnectLocal}
+                  disabled={isIndexing}
+                  className="w-full p-3 rounded-lg bg-purple-500/10 border border-purple-500/30 hover:bg-purple-500/20 transition-all group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-purple-500/20">
+                      {isIndexing ? (
+                        <Loader2 className="w-4 h-4 text-purple-400 animate-spin" />
+                      ) : (
+                        <FolderOpen className="w-4 h-4 text-purple-400" />
+                      )}
+                    </div>
+                    <div className="text-left">
+                      <p className="text-sm font-medium text-purple-400">
+                        {isIndexing ? 'Indexing...' : 'Select Local Folder'}
+                      </p>
+                      <p className="text-[10px] text-slate-500">
+                        {hasLocalWorkspace ? 'Use workspace folder' : 'Browse your computer'}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+
+                <div className="flex items-center gap-2 text-[10px] text-slate-600">
+                  <div className="flex-1 h-px bg-slate-800" />
+                  <span>or</span>
+                  <div className="flex-1 h-px bg-slate-800" />
+                </div>
+
+                {/* GitHub URL Option */}
                 <div className="relative">
                   <Link className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                   <input
                     type="text"
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-10 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 outline-none text-slate-200 placeholder:text-slate-600"
-                    placeholder="GitHub URL or local path..."
+                    placeholder="GitHub URL..."
                     value={repoUrl}
                     onChange={(e) => setRepoUrl(e.target.value)}
                     onKeyDown={(e) => handleKeyDown(e, handleConnectRepo)}
@@ -132,21 +242,59 @@ export default function Pillar3Page() {
                 <button
                   onClick={handleConnectRepo}
                   disabled={!repoUrl.trim()}
-                  className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-all"
+                  className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-all"
                 >
                   <GitBranch className="w-4 h-4" />
-                  Connect Repository
+                  Connect GitHub
                 </button>
-                <p className="text-[10px] text-slate-600 text-center">
-                  Or drag & drop a folder to analyze
-                </p>
+              </div>
+            ) : isLocalConnected ? (
+              <div className="space-y-3">
+                <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <FolderOpen className="w-4 h-4 text-purple-400" />
+                      <span className="text-sm font-medium text-purple-400">Local Folder</span>
+                    </div>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300">
+                      {indexedCount} files
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 truncate">
+                    {workspace?.name || 'Local workspace'}
+                  </p>
+                </div>
+                
+                {/* File Tree Preview */}
+                <div className="max-h-32 overflow-y-auto bg-slate-950/50 rounded-lg p-2">
+                  {renderFileTree(localFiles)}
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleConnectLocal}
+                    className="flex-1 text-xs text-purple-400 hover:text-purple-300 transition-colors flex items-center justify-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Refresh
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsLocalConnected(false);
+                      setLocalFiles([]);
+                    }}
+                    className="flex-1 text-xs text-slate-500 hover:text-slate-400 transition-colors"
+                  >
+                    Disconnect
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="space-y-3">
                 <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
                   <div className="flex items-center gap-2 mb-1">
                     <GitBranch className="w-4 h-4 text-emerald-400" />
-                    <span className="text-sm font-medium text-emerald-400">Connected</span>
+                    <span className="text-sm font-medium text-emerald-400">GitHub Connected</span>
                   </div>
                   <p className="text-xs text-slate-400 truncate">{repoUrl}</p>
                 </div>

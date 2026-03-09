@@ -45,3 +45,7 @@ pytest-cov>=4.1.0
 # Code analysis for Pillar 3
 tree-sitter>=0.20.4
 gitpython>=3.1.40
+
+# Redis for session/token storage
+# Uses local Redis in development, cloud Redis (ElastiCache, Redis Cloud) in production
+redis>=5.0.0

@@ -1,10 +1,12 @@
 "use client";
 
+import { useEffect, useState, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { 
-  Rocket, 
-  Code2, 
-  Database, 
+import {
+  Rocket,
+  Code2,
+  Database,
   ArrowRight,
   Zap,
   Users,
@@ -122,6 +124,33 @@ function PillarCard({ pillar }: { pillar: typeof pillars[0] }) {
 }
 
 export default function HomePage() {
+  const router = useRouter();
+  
+  // Check workspace on initial render (not in effect to avoid eslint warning)
+  const hasWorkspace = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return !!localStorage.getItem('helix_workspace');
+  }, []);
+
+  // Redirect to onboarding if no workspace
+  useEffect(() => {
+    if (!hasWorkspace) {
+      router.push('/onboarding');
+    }
+  }, [hasWorkspace, router]);
+
+  // Show loading while redirecting
+  if (!hasWorkspace) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-[#0a0f1a]">
+        <div className="text-center">
+          <div className="w-12 h-12 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-gray-400">Loading Helix...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen overflow-y-auto bg-[#0a0f1a]">
       {/* Hero Section */}

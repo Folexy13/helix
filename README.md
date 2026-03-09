@@ -5,6 +5,22 @@
 [![Amazon Nova](https://img.shields.io/badge/Powered%20by-Amazon%20Nova-orange)](https://aws.amazon.com/bedrock/nova/)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Voice AI](https://img.shields.io/badge/Voice-Nova%202%20Sonic-purple)](https://aws.amazon.com/bedrock/)
+[![UI Automation](https://img.shields.io/badge/Automation-Nova%20Act-blue)](https://aws.amazon.com/bedrock/)
+
+---
+
+## 🎯 Hackathon Winning Features
+
+Helix is designed to win across **ALL** hackathon categories:
+
+| Category | Implementation |
+|----------|---------------|
+| **🤖 Agentic AI** | 10+ specialized agents with Strands SDK orchestration |
+| **🎤 Voice AI** | Nova 2 Sonic as PRIMARY UI - bidirectional streaming, distinct agent voices |
+| **🖥️ UI Automation** | Nova Act creates REAL GitHub PRs autonomously |
+| **🎨 Multimodal** | Nova Multimodal Embeddings for code + images + diagrams |
+| **🏆 Freestyle** | All four combined into one unprecedented platform |
 
 ---
 
@@ -66,17 +82,109 @@ Connect your GitHub repository and have natural conversations about your code:
 
 ---
 
+## 🎤 Voice-First Experience (Nova 2 Sonic)
+
+Helix uses **Nova 2 Sonic as the PRIMARY user interface**, not just an add-on:
+
+### Features
+- **Bidirectional Full-Duplex Streaming** - Speak naturally, no push-to-talk
+- **Natural Turn-Taking** - Configurable VAD for technical conversations
+- **Crossmodal Switching** - Switch between voice and text mid-conversation
+- **Async Tool Use** - Conversation continues while agents process
+- **Distinct Agent Voices** - Each agent has a unique voice persona
+
+### Agent Voice Personas
+| Agent | Voice | Style |
+|-------|-------|-------|
+| **ARIA** (CTO) | Tiffany | Calm, precise, technical |
+| **FELIX** (CFO) | Matthew | Measured, confident |
+| **NOVA** (CMO) | Aurora | Warm, energetic |
+| **JUDGE** (Investor) | Gregory | Firm, skeptical |
+| **SAGE** (Codebase) | Stephen | Patient, thoughtful |
+| **ORCHESTRATOR** | Ivy | Clear, neutral |
+
+### Voice WebSocket API
+```javascript
+// Connect to voice session
+const ws = new WebSocket('/api/voice/ws/{session_id}');
+
+// Send audio
+ws.send(JSON.stringify({ type: 'audio', data: base64Audio }));
+
+// Receive transcripts and speech
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  if (msg.type === 'speech') playAudio(msg.audio);
+  if (msg.type === 'transcript') showText(msg.text);
+};
+```
+
+---
+
+## 🤖 Advanced Tools
+
+### Web Grounding (FELIX/CFO)
+Real-time web search for live pricing data:
+```python
+# FELIX uses web grounding for live AWS pricing
+result = await web_grounding.get_aws_pricing("EC2 t3.medium")
+# Returns current pricing with sources
+```
+
+### Code Interpreter (TESTER)
+Actually executes and validates tests:
+```python
+# TESTER runs tests, not just generates them
+result = await code_interpreter.run_tests(test_code, "python")
+# Returns real pass/fail counts
+```
+
+### Extended Thinking (PLANNER, REVIEWER)
+Deep reasoning for complex analysis:
+```python
+# REVIEWER uses extended thinking for security analysis
+result = await thinking.analyze_security(code, "python")
+# Returns detailed reasoning + conclusions
+```
+
+---
+
+## 🖥️ Nova Act Automation
+
+Real browser automation for GitHub operations:
+
+### Capabilities
+- **Create Branches** - Automated branch creation
+- **Commit Files** - Push generated code
+- **Open PRs** - Create pull requests with descriptions
+- **Browse Repos** - Index repository structure
+
+### Example: Deploy Code Package
+```python
+result = await github_automation.deploy_code_package(
+    files={"src/auth.py": auth_code, "tests/test_auth.py": test_code},
+    branch_name="feature/user-auth",
+    pr_title="Add user authentication",
+    pr_body="Implements JWT-based authentication...",
+)
+# Returns: { "pr_url": "https://github.com/.../pull/42" }
+```
+
+---
+
 ## 🛠️ Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| **Backend** | Python 3.10+ |
+| **Backend** | Python 3.10+ with FastAPI |
 | **Agent Orchestration** | Strands Agents SDK pattern |
-| **Reasoning Model** | Amazon Nova 2 Lite |
-| **Voice Model** | Amazon Nova 2 Sonic |
-| **UI Automation** | Amazon Nova Act |
-| **Embeddings / RAG** | Amazon Nova Multimodal Embeddings |
-| **Infrastructure** | AWS (Amazon Bedrock) |
+| **Reasoning Model** | Amazon Nova 2 Lite + Nova Pro (extended thinking) |
+| **Voice Model** | Amazon Nova 2 Sonic (bidirectional streaming) |
+| **UI Automation** | Amazon Nova Act (browser automation) |
+| **Embeddings / RAG** | Amazon Nova Multimodal Embeddings (code + images) |
+| **Advanced Tools** | Web Grounding, Code Interpreter, Extended Thinking |
+| **Frontend** | Next.js 14 with real-time voice UI |
+| **Infrastructure** | AWS (Amazon Bedrock, us-east-1) |
 
 ---
 

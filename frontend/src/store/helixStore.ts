@@ -1,4 +1,23 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+// Workspace configuration
+export interface WorkspaceConfig {
+  type: 'github' | 'local' | 'new';
+  name: string;
+  github_repo?: string;
+  github_owner?: string;
+  local_path?: string;
+  // Note: FileSystemDirectoryHandle cannot be persisted, stored separately
+}
+
+// Generated file
+export interface GeneratedFile {
+  path: string;
+  content: string;
+  language?: string;
+  status?: 'pending' | 'writing' | 'written' | 'error';
+}
 
 // Agent persona type
 export interface AgentPersona {
@@ -85,6 +104,19 @@ interface HelixState {
   activePillar: number | null;
   setSession: (id: string, pillar: number) => void;
 
+  // Workspace State
+  workspace: WorkspaceConfig | null;
+  setWorkspace: (workspace: WorkspaceConfig | null) => void;
+  isOnboarded: boolean;
+  setOnboarded: (onboarded: boolean) => void;
+
+  // Generated Files (for live preview and local sync)
+  generatedFiles: GeneratedFile[];
+  addGeneratedFile: (file: GeneratedFile) => void;
+  addGeneratedFiles: (files: GeneratedFile[]) => void;
+  updateFileStatus: (path: string, status: GeneratedFile['status']) => void;
+  clearGeneratedFiles: () => void;
+
   // Agent Personas
   agentPersonas: Record<string, AgentPersona>;
   setAgentPersonas: (personas: Record<string, AgentPersona>) => void;
@@ -136,6 +168,29 @@ export const useHelixStore = create<HelixState>((set, get) => ({
   activePillar: null,
   setSession: (id, pillar) => set({ sessionId: id, activePillar: pillar }),
 
+  // Workspace
+  workspace: null,
+  setWorkspace: (workspace) => set({ workspace }),
+  isOnboarded: false,
+  setOnboarded: (onboarded) => set({ isOnboarded: onboarded }),
+
+  // Generated Files
+  generatedFiles: [],
+  addGeneratedFile: (file) => set((state) => ({
+    generatedFiles: [...state.generatedFiles.filter(f => f.path !== file.path), file],
+  })),
+  addGeneratedFiles: (files) => set((state) => {
+    const existingPaths = new Set(files.map(f => f.path));
+    const filtered = state.generatedFiles.filter(f => !existingPaths.has(f.path));
+    return { generatedFiles: [...filtered, ...files] };
+  }),
+  updateFileStatus: (path, status) => set((state) => ({
+    generatedFiles: state.generatedFiles.map(f => 
+      f.path === path ? { ...f, status } : f
+    ),
+  })),
+  clearGeneratedFiles: () => set({ generatedFiles: [] }),
+
   // Agent Personas
   agentPersonas: {},
   setAgentPersonas: (personas) => set({ agentPersonas: personas }),
@@ -165,6 +220,7 @@ export const useHelixStore = create<HelixState>((set, get) => ({
     pendingCheckpoints: [],
     handoffs: [],
     typingAgents: new Set(),
+    generatedFiles: [],
   }),
 
   // HITL Checkpoints

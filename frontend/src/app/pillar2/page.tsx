@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import dynamic from "next/dynamic";
 import { useHelixSocket } from "@/hooks/useHelixSocket";
 import { useHelixStore } from "@/store/helixStore";
 import AgentLogStream from "@/components/AgentLogStream";
-import { 
-  Play, 
-  Code2, 
-  Loader2, 
+import { fileSystemService } from "@/services/FileSystemService";
+import {
+  Play,
+  Code2,
+  Loader2,
   Send,
   Mic,
   FileCode,
@@ -16,8 +18,26 @@ import {
   Search,
   GitPullRequest,
   Workflow,
+  Monitor,
+  Terminal,
+  Maximize2,
+  Minimize2,
+  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// Dynamic import for WebContainer (client-side only)
+const LivePreview = dynamic(() => import("@/components/LivePreview"), {
+  ssr: false,
+  loading: () => (
+    <div className="h-full flex items-center justify-center bg-gray-900 rounded-xl">
+      <div className="text-center text-gray-500">
+        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
+        <p>Loading preview environment...</p>
+      </div>
+    </div>
+  ),
+});
 
 // Agent card with status
 function AgentCard({ 
@@ -123,11 +143,27 @@ function PipelineStage({
 
 export default function Pillar2Page() {
   const { isConnected, startPipeline, sendUserMessage } = useHelixSocket();
-  const { currentStage, stageDescription, activeAgent, pipelineProgress, isProcessing, resetPipeline, activePillar } = useHelixStore();
+  const { 
+    currentStage, 
+    stageDescription, 
+    activeAgent, 
+    pipelineProgress, 
+    isProcessing, 
+    resetPipeline, 
+    activePillar,
+    generatedFiles,
+    clearGeneratedFiles,
+    workspace,
+  } = useHelixStore();
   
   const [featureInput, setFeatureInput] = useState("");
   const [followUpInput, setFollowUpInput] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Check workspace access - computed value
+  const hasWorkspaceAccess = useMemo(() => {
+    return !!fileSystemService.getRootHandle() || !!workspace;
+  }, [workspace]);
 
   // Reset pipeline state when entering Pillar 2 (if coming from another pillar)
   useEffect(() => {
@@ -137,10 +173,16 @@ export default function Pillar2Page() {
     inputRef.current?.focus();
   }, [activePillar, currentStage, resetPipeline]);
 
+  // State for preview
+  const [showPreview, setShowPreview] = useState(true);
+  const [previewExpanded, setPreviewExpanded] = useState(false);
+
   const handleStart = () => {
     if (featureInput.trim()) {
       startPipeline(2, featureInput);
       setFeatureInput("");
+      // Clear previous generated files
+      clearGeneratedFiles();
     }
   };
 
@@ -150,6 +192,9 @@ export default function Pillar2Page() {
       setFollowUpInput("");
     }
   };
+
+  // Generated files are now received via WebSocket and stored in the global store
+  // The useHelixSocket hook listens for 'generated_files' events and updates the store
 
   const handleKeyDown = (e: React.KeyboardEvent, action: () => void) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -209,6 +254,18 @@ export default function Pillar2Page() {
         </div>
         
         <div className="flex items-center gap-4">
+          {/* Workspace indicator */}
+          {hasWorkspaceAccess && workspace && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/20">
+              <FolderOpen className="w-3 h-3 text-purple-400" />
+              <span className="text-xs text-purple-400 font-medium truncate max-w-[120px]">
+                {workspace.name}
+              </span>
+              <span className="text-[10px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300">
+                Local Sync
+              </span>
+            </div>
+          )}
           {isProcessing && (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/20">
               <Loader2 className="w-3 h-3 text-cyan-400 animate-spin" />
@@ -314,11 +371,74 @@ export default function Pillar2Page() {
           </div>
         </div>
 
-        {/* Main Area - Conversation */}
+        {/* Main Area - Conversation + Preview */}
         <div className="flex-1 flex flex-col min-w-0">
-          {/* Conversation Stream */}
-          <div className="flex-1 overflow-hidden p-6">
-            <AgentLogStream />
+          {/* Toggle Preview Button */}
+          <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-900/50">
+            <div className="flex items-center gap-2">
+              <Monitor className="w-4 h-4 text-cyan-400" />
+              <span className="text-xs font-medium text-slate-400">Live Preview</span>
+              {generatedFiles.length > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400">
+                  {generatedFiles.length} files
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowPreview(!showPreview)}
+                className={cn(
+                  "px-2 py-1 text-xs rounded transition-colors",
+                  showPreview ? "bg-cyan-500/20 text-cyan-400" : "bg-slate-800 text-slate-400"
+                )}
+              >
+                {showPreview ? 'Hide Preview' : 'Show Preview'}
+              </button>
+              {showPreview && (
+                <button
+                  onClick={() => setPreviewExpanded(!previewExpanded)}
+                  className="p-1 rounded bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                >
+                  {previewExpanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Split View: Conversation + Preview */}
+          <div className={cn(
+            "flex-1 flex overflow-hidden",
+            previewExpanded ? "flex-col" : "flex-row"
+          )}>
+            {/* Conversation Stream */}
+            <div className={cn(
+              "flex flex-col overflow-hidden",
+              showPreview && !previewExpanded ? "w-1/2 border-r border-slate-800" : "flex-1",
+              showPreview && previewExpanded ? "h-1/3" : ""
+            )}>
+              <div className="flex-1 overflow-hidden p-4">
+                <AgentLogStream />
+              </div>
+            </div>
+
+            {/* Live Preview Panel */}
+            {showPreview && (
+              <div className={cn(
+                "flex flex-col overflow-hidden bg-slate-950",
+                previewExpanded ? "flex-1" : "w-1/2"
+              )}>
+                <LivePreview
+                  files={generatedFiles}
+                  projectType="react"
+                  syncToLocal={hasWorkspaceAccess}
+                  onTerminalOutput={(output) => console.log('[Preview]', output)}
+                  onError={(error) => console.error('[Preview Error]', error)}
+                  onReady={(url) => console.log('[Preview Ready]', url)}
+                  onFileSynced={(path) => console.log('[File Synced]', path)}
+                  className="h-full"
+                />
+              </div>
+            )}
           </div>
 
           {/* Input Area */}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useHelixStore, AgentPersona, ConversationMessage } from '@/store/helixStore';
 import ReactMarkdown from 'react-markdown';
 import { 
@@ -11,8 +11,163 @@ import {
   ArrowRight,
   User,
   Loader2,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Check,
+  FileCode,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+// Collapsible code block component
+function CollapsibleCodeBlock({ 
+  content, 
+  language = 'text',
+  filename,
+  defaultExpanded = false 
+}: { 
+  content: string; 
+  language?: string;
+  filename?: string;
+  defaultExpanded?: boolean;
+}) {
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const [copied, setCopied] = useState(false);
+  
+  const lines = content.split('\n');
+  const lineCount = lines.length;
+  const preview = lines.slice(0, 3).join('\n');
+  
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  
+  return (
+    <div className="my-2 rounded-lg border border-slate-700 overflow-hidden bg-slate-900/80">
+      {/* Header */}
+      <div 
+        className="flex items-center justify-between px-3 py-2 bg-slate-800/50 cursor-pointer hover:bg-slate-800/70 transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center gap-2">
+          {isExpanded ? (
+            <ChevronDown className="w-4 h-4 text-slate-400" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-slate-400" />
+          )}
+          <FileCode className="w-4 h-4 text-blue-400" />
+          <span className="text-xs font-medium text-slate-300">
+            {filename || language || 'Code'}
+          </span>
+          <span className="text-[10px] text-slate-500">
+            {lineCount} lines
+          </span>
+        </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            handleCopy();
+          }}
+          className="p-1 rounded hover:bg-slate-700 transition-colors"
+          title="Copy code"
+        >
+          {copied ? (
+            <Check className="w-3.5 h-3.5 text-green-400" />
+          ) : (
+            <Copy className="w-3.5 h-3.5 text-slate-400" />
+          )}
+        </button>
+      </div>
+      
+      {/* Code content */}
+      <div className={cn(
+        "overflow-hidden transition-all duration-200",
+        isExpanded ? "max-h-[500px]" : "max-h-20"
+      )}>
+        <pre className="p-3 text-xs font-mono text-slate-300 overflow-x-auto">
+          <code>{isExpanded ? content : preview + (lineCount > 3 ? '\n...' : '')}</code>
+        </pre>
+      </div>
+      
+      {/* Expand hint */}
+      {!isExpanded && lineCount > 3 && (
+        <div className="px-3 py-1.5 text-[10px] text-slate-500 bg-slate-800/30 border-t border-slate-700/50">
+          Click to expand ({lineCount - 3} more lines)
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Parse content for code blocks and render them collapsible
+function RichContent({ content, isResult }: { content: string; isResult: boolean }) {
+  // Check if content has code blocks
+  const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+  const hasCodeBlocks = codeBlockRegex.test(content);
+  
+  if (!hasCodeBlocks || !isResult) {
+    // No code blocks or not a result - render as markdown
+    return (
+      <div className="prose prose-invert prose-sm max-w-none prose-headings:text-blue-400 prose-headings:font-bold prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-code:text-blue-200 prose-code:bg-blue-500/10 prose-code:px-1 prose-code:rounded prose-hr:border-slate-700">
+        <ReactMarkdown>{content}</ReactMarkdown>
+      </div>
+    );
+  }
+  
+  // Split content by code blocks and render each part
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match;
+  let partIndex = 0;
+  
+  // Reset regex
+  codeBlockRegex.lastIndex = 0;
+  
+  while ((match = codeBlockRegex.exec(content)) !== null) {
+    // Add text before code block
+    if (match.index > lastIndex) {
+      const textBefore = content.slice(lastIndex, match.index);
+      if (textBefore.trim()) {
+        parts.push(
+          <div key={`text-${partIndex}`} className="prose prose-invert prose-sm max-w-none prose-headings:text-blue-400 prose-headings:font-bold prose-code:text-blue-200 prose-code:bg-blue-500/10 prose-code:px-1 prose-code:rounded">
+            <ReactMarkdown>{textBefore}</ReactMarkdown>
+          </div>
+        );
+      }
+    }
+    
+    // Add collapsible code block
+    const language = match[1] || 'text';
+    const code = match[2].trim();
+    parts.push(
+      <CollapsibleCodeBlock 
+        key={`code-${partIndex}`}
+        content={code}
+        language={language}
+        defaultExpanded={code.split('\n').length <= 10}
+      />
+    );
+    
+    lastIndex = match.index + match[0].length;
+    partIndex++;
+  }
+  
+  // Add remaining text after last code block
+  if (lastIndex < content.length) {
+    const textAfter = content.slice(lastIndex);
+    if (textAfter.trim()) {
+      parts.push(
+        <div key={`text-${partIndex}`} className="prose prose-invert prose-sm max-w-none prose-headings:text-blue-400 prose-headings:font-bold prose-code:text-blue-200 prose-code:bg-blue-500/10 prose-code:px-1 prose-code:rounded">
+          <ReactMarkdown>{textAfter}</ReactMarkdown>
+        </div>
+      );
+    }
+  }
+  
+  return <>{parts}</>;
+}
 
 // Agent avatar component
 function AgentAvatar({ persona, size = 'md' }: { persona?: AgentPersona; size?: 'sm' | 'md' }) {
@@ -158,9 +313,7 @@ function ConversationItem({ message, persona }: { message: ConversationMessage; 
             : "bg-slate-800/50 border border-slate-700/50 px-4 py-2 text-slate-300"
         )}>
           {isResult ? (
-            <div className="prose prose-invert prose-sm max-w-none prose-headings:text-blue-400 prose-headings:font-bold prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-code:text-blue-200 prose-code:bg-blue-500/10 prose-code:px-1 prose-code:rounded prose-hr:border-slate-700">
-              <ReactMarkdown>{message.content}</ReactMarkdown>
-            </div>
+            <RichContent content={message.content} isResult={true} />
           ) : (
             <p>{message.content}</p>
           )}

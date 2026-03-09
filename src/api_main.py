@@ -9,6 +9,9 @@ Enhanced with:
 - Smart agent handoffs with context awareness
 - Bidirectional conversation support
 - Real-time agent status streaming
+- Nova 2 Sonic voice interactions
+- Nova Act GitHub automation
+- Advanced tools (web grounding, code interpreter, extended thinking)
 """
 
 import asyncio
@@ -37,10 +40,35 @@ from src.agents.pillar3.sage import SageAgent
 from src.agents.base import AgentContext, AgentResponse
 from src.utils.helpers import save_project_files
 
+# Import new modules
+from src.api.voice_endpoints import router as voice_router
+from src.api.github_oauth import router as github_router
+from src.automation import get_github_automation
+from src.tools import get_tool_registry
+from src.embeddings import get_codebase_indexer
+from src.core.redis_storage import get_storage, close_storage
+
 logger = logging.getLogger(__name__)
 
 # --- Setup FastAPI ---
-app = FastAPI(title="Helix API", version="0.2.0")
+app = FastAPI(
+    title="Helix API",
+    version="0.3.0",
+    description="""
+    Helix - Intelligence That Spirals Forward
+    
+    AI-powered platform with:
+    - Pillar 1: Founding Team (AI Startup Co-Founder)
+    - Pillar 2: Engineering Workforce (Autonomous Coding Agents)
+    - Pillar 3: Codebase Intelligence (Ask Your Codebase)
+    
+    Powered by Amazon Nova 2 Lite, Nova 2 Sonic, Nova Act, and Nova Multimodal Embeddings.
+    """
+)
+
+# Include routers
+app.include_router(voice_router)
+app.include_router(github_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -61,7 +89,7 @@ orchestrators: Dict[str, IntelligentOrchestrator] = {}
 conversation_contexts: Dict[str, Dict[str, Any]] = {}
 
 
-# --- Agent Personas for UI ---
+# --- Agent Personas for UI with Nova 2 Sonic Voice IDs ---
 AGENT_PERSONAS = {
     "ROUTER": {
         "name": "ROUTER",
@@ -69,6 +97,8 @@ AGENT_PERSONAS = {
         "avatar": "🎯",
         "color": "#f97316",
         "voice": "neutral",
+        "voice_id": "ivy",  # Nova 2 Sonic voice
+        "speaking_rate": 1.0,
         "description": "Orchestrates the founding team analysis"
     },
     "ARIA": {
@@ -77,6 +107,8 @@ AGENT_PERSONAS = {
         "avatar": "🔧",
         "color": "#3b82f6",
         "voice": "technical",
+        "voice_id": "tiffany",  # Calm, precise female voice
+        "speaking_rate": 0.95,
         "description": "Technical feasibility and architecture expert"
     },
     "FELIX": {
@@ -85,7 +117,10 @@ AGENT_PERSONAS = {
         "avatar": "💰",
         "color": "#22c55e",
         "voice": "analytical",
-        "description": "Financial projections and cost analysis"
+        "voice_id": "matthew",  # Measured, confident male voice
+        "speaking_rate": 0.9,
+        "tools": ["web_search"],  # Web grounding for live pricing
+        "description": "Financial projections and cost analysis with live data"
     },
     "NOVA": {
         "name": "NOVA",
@@ -93,6 +128,8 @@ AGENT_PERSONAS = {
         "avatar": "📣",
         "color": "#ec4899",
         "voice": "creative",
+        "voice_id": "aurora",  # Warm, energetic female voice
+        "speaking_rate": 1.05,
         "description": "Marketing strategy and positioning"
     },
     "JUDGE": {
@@ -746,19 +783,18 @@ async def run_pillar2_workflow(
         await sio.emit('pipeline_update', {
             'current_stage': 'coding',
             'active_agent': 'CODER',
-            'progress_percent': 45,
-            'stage_description': 'Implementing feature code',
+            'progress_percent': 35,
+            'stage_description': 'Generating project files...',
         }, to=sid)
         await stream_typing_indicator(sid, 'CODER', True)
-        await stream_agent_log(sid, 'CODER', 'Building project files and installing dependencies...', 'thought')
+        await stream_agent_log(sid, 'CODER', '🔨 Building project structure and generating code...', 'thought')
         
         coder_response = await orch_agent.coder.execute(context)
         await stream_typing_indicator(sid, 'CODER', False)
-        await stream_agent_log(sid, 'CODER', coder_response.content, 'result')
         
         context.metadata["code_output"] = coder_response.metadata.get("code_output", {})
         
-        # Save generated project to filesystem (Kilo Code style)
+        # Stream files to frontend one by one for real-time preview
         try:
             import os
             project_dir = os.path.join(os.getcwd(), "output", "projects", sid)
@@ -766,10 +802,90 @@ async def run_pillar2_workflow(
             all_files = {**code_output.get("files", {}), **code_output.get("tests", {}), **code_output.get("documentation", {})}
             
             if all_files:
+                total_files = len(all_files)
+                
+                # Language mapping for syntax highlighting
+                lang_map = {
+                    'py': 'python', 'js': 'javascript', 'ts': 'typescript', 
+                    'tsx': 'typescript', 'jsx': 'javascript', 'json': 'json',
+                    'html': 'html', 'css': 'css', 'md': 'markdown', 'sql': 'sql',
+                    'yaml': 'yaml', 'yml': 'yaml', 'sh': 'bash', 'txt': 'text'
+                }
+                
+                # Stream each file individually with a small delay for visual effect
+                for idx, (filepath, content) in enumerate(all_files.items()):
+                    ext = filepath.split('.')[-1] if '.' in filepath else ''
+                    language = lang_map.get(ext, 'text')
+                    
+                    # Calculate progress within coding stage (35% to 55%)
+                    file_progress = 35 + int((idx / total_files) * 20)
+                    
+                    # Emit file streaming event
+                    await sio.emit('file_streaming', {
+                        'path': filepath,
+                        'content': content,
+                        'language': language,
+                        'status': 'writing',
+                        'index': idx,
+                        'total': total_files,
+                    }, to=sid)
+                    
+                    # Update pipeline progress
+                    await sio.emit('pipeline_update', {
+                        'current_stage': 'coding',
+                        'active_agent': 'CODER',
+                        'progress_percent': file_progress,
+                        'stage_description': f'📝 Writing {filepath} ({idx + 1}/{total_files})',
+                    }, to=sid)
+                    
+                    # Log each file creation
+                    await stream_agent_log(sid, 'CODER', f'📄 Created: `{filepath}`', 'action')
+                    
+                    # Small delay for visual streaming effect
+                    await asyncio.sleep(0.1)
+                    
+                    # Mark file as written
+                    await sio.emit('file_streaming', {
+                        'path': filepath,
+                        'content': content,
+                        'language': language,
+                        'status': 'written',
+                        'index': idx,
+                        'total': total_files,
+                    }, to=sid)
+                
+                # Save to filesystem
                 saved_paths = save_project_files(project_dir, all_files)
-                await stream_agent_log(sid, 'SYSTEM', f'📂 Project files saved to `{project_dir}` ({len(saved_paths)} files)', 'action')
+                await stream_agent_log(sid, 'SYSTEM', f'💾 Saved {len(saved_paths)} files to `{project_dir}`', 'action')
+                
+                # Emit completion event - frontend can now start installation
+                project_type = 'react' if any('tsx' in f or 'jsx' in f for f in all_files.keys()) else 'node'
+                await sio.emit('files_complete', {
+                    'total_files': total_files,
+                    'project_type': project_type,
+                    'ready_for_install': True,
+                }, to=sid)
+                
+                # Also emit batch for compatibility
+                generated_files = [
+                    {'path': fp, 'content': ct, 'language': lang_map.get(fp.split('.')[-1] if '.' in fp else '', 'text')}
+                    for fp, ct in all_files.items()
+                ]
+                await sio.emit('generated_files', {
+                    'files': generated_files,
+                    'project_type': project_type
+                }, to=sid)
+                
+                logger.info(f"Streamed {total_files} files to frontend for LivePreview")
+                
+                # Summary log
+                await stream_agent_log(sid, 'CODER', f'✅ Generated {total_files} files: {", ".join(list(all_files.keys())[:5])}{"..." if total_files > 5 else ""}', 'result')
+            else:
+                await stream_agent_log(sid, 'CODER', '⚠️ No files were generated', 'error')
+                
         except Exception as fs_err:
             logger.error(f"Failed to save project files: {fs_err}")
+            await stream_agent_log(sid, 'SYSTEM', f'❌ Error saving files: {str(fs_err)}', 'error')
         
         # Step 3: Testing
         await sio.emit('pipeline_update', {
@@ -928,10 +1044,31 @@ async def run_pillar3_workflow(
 
 # --- REST API Endpoints ---
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on startup."""
+    logger.info("Starting Helix API...")
+    # Initialize Redis storage (will use in-memory if Redis unavailable)
+    try:
+        storage = await get_storage()
+        logger.info("Storage backend initialized successfully")
+    except Exception as e:
+        logger.warning(f"Storage initialization warning: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    logger.info("Shutting down Helix API...")
+    # Close Redis connection
+    await close_storage()
+    logger.info("Storage connection closed")
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "version": "0.2.0"}
+    return {"status": "healthy", "version": "0.3.0"}
 
 
 @app.get("/api/agents")

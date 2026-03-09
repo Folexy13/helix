@@ -78,6 +78,13 @@ class Settings(BaseSettings):
     github_owner: Optional[str] = Field(default=None, description="GitHub repository owner")
     github_repo: Optional[str] = Field(default=None, description="GitHub repository name")
     
+    # GitHub OAuth Configuration
+    github_client_id: Optional[str] = Field(default=None, description="GitHub OAuth App Client ID")
+    github_client_secret: Optional[str] = Field(default=None, description="GitHub OAuth App Client Secret")
+    
+    # Application URL (for OAuth callbacks)
+    app_url: str = Field(default="http://localhost:8000", description="Application base URL")
+    
     # Voice Configuration
     voice_sample_rate: int = Field(default=16000, description="Audio sample rate in Hz")
     voice_channels: int = Field(default=1, description="Number of audio channels")
@@ -101,6 +108,22 @@ class Settings(BaseSettings):
     chunk_size: int = Field(default=1000, description="Text chunk size for RAG")
     chunk_overlap: int = Field(default=200, description="Chunk overlap for RAG")
     top_k_results: int = Field(default=5, description="Number of top results for RAG retrieval")
+    
+    # Redis Configuration
+    # Local development: redis://localhost:6379/0
+    # Production: Set REDIS_URL to your cloud Redis instance
+    redis_url: Optional[str] = Field(
+        default=None,
+        description="Redis connection URL. If not set, uses in-memory storage."
+    )
+    redis_password: Optional[str] = Field(
+        default=None,
+        description="Redis password (if required)"
+    )
+    redis_ssl: bool = Field(
+        default=False,
+        description="Use SSL for Redis connection (recommended for production)"
+    )
     
     @property
     def is_production(self) -> bool:

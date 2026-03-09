@@ -119,6 +119,43 @@ export function HelixSocketProvider({ children }: { children: ReactNode }): Reac
       storeRef.current.setAgentTyping(data.agent, data.is_typing);
     });
 
+    // Generated files for LivePreview (batch)
+    socketInstance.on('generated_files', (data: {
+      files: Array<{ path: string; content: string; language?: string }>;
+      project_type?: string;
+    }) => {
+      console.log('Global Socket: Received generated files', data.files.length);
+      storeRef.current.addGeneratedFiles(data.files);
+    });
+
+    // Streaming file generation - files arrive one at a time as they're generated
+    socketInstance.on('file_streaming', (data: {
+      path: string;
+      content: string;
+      language?: string;
+      status: 'pending' | 'writing' | 'written' | 'error';
+      index: number;
+      total: number;
+    }) => {
+      console.log(`Global Socket: Streaming file ${data.index + 1}/${data.total}: ${data.path}`);
+      storeRef.current.addGeneratedFile({
+        path: data.path,
+        content: data.content,
+        language: data.language,
+        status: data.status,
+      });
+    });
+
+    // File generation complete - trigger installation
+    socketInstance.on('files_complete', (data: {
+      total_files: number;
+      project_type: string;
+      ready_for_install: boolean;
+    }) => {
+      console.log(`Global Socket: All ${data.total_files} files generated, ready for install: ${data.ready_for_install}`);
+      // The LivePreview component will handle installation when it sees all files are 'written'
+    });
+
     // Message acknowledgment
     socketInstance.on('message_received', (data: {
       message_id: string;
