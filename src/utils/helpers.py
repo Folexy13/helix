@@ -208,3 +208,36 @@ def merge_dicts(base: Dict, override: Dict) -> Dict:
             result[key] = value
     
     return result
+
+
+def save_project_files(base_path: str, files: Dict[str, str]) -> List[str]:
+    """
+    Save project files to the filesystem.
+    
+    Args:
+        base_path: Base directory to save files in
+        files: Dictionary mapping file paths to content
+        
+    Returns:
+        List of saved file paths
+    """
+    import os
+    import os.path
+    
+    saved_paths = []
+    
+    for path, content in files.items():
+        # Ensure the path is safe and relative
+        path = path.lstrip('/')
+        full_path = os.path.join(base_path, path)
+        
+        # Create directories if they don't exist
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        
+        # Write content
+        with open(full_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+            
+        saved_paths.append(path)
+        
+    return saved_paths

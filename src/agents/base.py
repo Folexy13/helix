@@ -166,22 +166,17 @@ class BaseAgent(ABC):
     
     def _register_default_tools(self) -> None:
         """Register default tools available to all agents."""
-        # Think tool for extended reasoning
-        self.register_tool(Tool(
-            name="think",
-            description="Use this tool to think through a complex problem step by step before responding.",
-            parameters={
-                "thought": {
-                    "type": "string",
-                    "description": "Your step-by-step reasoning about the problem",
-                }
-            },
-            handler=self._think_handler,
-        ))
+        # NOTE: Disabled think tool as it causes "Model produced invalid sequence" errors
+        # with Nova Lite. The model tries to use tools but generates invalid sequences.
+        # For now, agents will work without tools.
+        pass
     
-    async def _think_handler(self, thought: str) -> str:
+    async def _think_handler(self, thought: str = "", **kwargs) -> str:
         """Handler for the think tool."""
-        logger.debug(f"Agent {self.name} thinking: {thought[:100]}...")
+        # Handle case where thought might be passed differently
+        if not thought and kwargs:
+            thought = str(kwargs.get('thought', kwargs.get('text', str(kwargs))))
+        logger.debug(f"Agent {self.name} thinking: {thought[:100] if thought else 'empty'}...")
         return f"Thought recorded: {thought}"
     
     def register_tool(self, tool: Tool) -> None:

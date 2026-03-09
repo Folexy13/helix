@@ -69,11 +69,15 @@ class CodebaseRAG:
             logger.warning("No chunks to index")
             return
         
-        # Filter chunks with embeddings
-        valid_chunks = [c for c in chunks if c.embedding]
+        logger.info(f"Total chunks: {len(chunks)}")
+        
+        # Filter chunks with valid embeddings (non-empty)
+        valid_chunks = [c for c in chunks if c.embedding and len(c.embedding) > 0]
+        
+        logger.info(f"Chunks with valid embeddings: {len(valid_chunks)}/{len(chunks)}")
         
         if not valid_chunks:
-            logger.warning("No chunks with embeddings")
+            logger.warning("No chunks with embeddings - embedding generation may have failed")
             return
         
         # Build embedding matrix
@@ -85,7 +89,7 @@ class CodebaseRAG:
         norms = np.linalg.norm(self._embeddings, axis=1, keepdims=True)
         self._embeddings = self._embeddings / (norms + 1e-10)
         
-        logger.info(f"Built index with {len(valid_chunks)} vectors")
+        logger.info(f"Built index with {len(valid_chunks)} vectors, embedding dim: {self._embeddings.shape[1] if len(self._embeddings.shape) > 1 else 0}")
     
     async def retrieve(
         self,

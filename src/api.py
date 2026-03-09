@@ -35,6 +35,7 @@ from src.agents.pillar2.orchestrator import OrchestratorAgent
 from src.agents.pillar1.router import RouterAgent
 from src.agents.pillar3.sage import SageAgent
 from src.agents.base import AgentContext, AgentResponse
+from src.utils.helpers import save_project_files
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +229,15 @@ async def start_pipeline(sid, data):
         asyncio.create_task(run_pillar2_workflow(sid, session_state, hitl_handler, intelligent_orchestrator, user_input))
     elif pillar == 3:
         repo_path = data.get('repo')
+        # Validate repo_path to prevent corrupted data
+        if repo_path:
+            # Sanitize: repo_path should be a clean path, not contain log output
+            if any(x in str(repo_path) for x in ['INFO:', 'ERROR:', 'websocket', '[accepted]', 'connection']):
+                logger.warning(f"Received corrupted repo_path, ignoring: {repo_path[:100]}...")
+                repo_path = None
+            elif len(str(repo_path)) > 500:
+                logger.warning(f"repo_path too long, ignoring: {repo_path[:100]}...")
+                repo_path = None
         asyncio.create_task(run_pillar3_workflow(sid, session_state, hitl_handler, intelligent_orchestrator, user_input, repo_path))
     else:
         await sio.emit('agent_log', {'agent': 'SYSTEM', 'message': f'Pillar {pillar} not recognized.', 'type': 'error'}, to=sid)
@@ -715,109 +725,92 @@ async def run_pillar2_workflow(
     }, to=sid)
 
     try:
-        await stream_typing_indicator(sid, 'ORCHESTRATOR', True)
-        await stream_agent_log(sid, 'ORCHESTRATOR', 'Analyzing requirements and preparing specialist tasks...', 'thought')
+        # Step 1: Planning
+        await sio.emit('pipeline_update', {
+            'current_stage': 'planning',
+            'active_agent': 'PLANNER',
+            'progress_percent': 20,
+            'stage_description': 'Designing architecture and specifications',
+        }, to=sid)
+        await stream_typing_indicator(sid, 'PLANNER', True)
+        await stream_agent_log(sid, 'PLANNER', 'Creating ERD, UML, and Architecture diagrams...', 'thought')
         
-        response = await orch_agent.execute(context)
-        await stream_typing_indicator(sid, 'ORCHESTRATOR', False)
+        planner_response = await orch_agent.planner.execute(context)
+        await stream_typing_indicator(sid, 'PLANNER', False)
+        await stream_agent_log(sid, 'PLANNER', planner_response.content, 'result')
         
-        orchestrator.add_conversation_turn("orchestrator", response.content)
+        context.metadata["engineering_spec"] = planner_response.metadata
+        context.metadata["spec_text"] = planner_response.content
         
-        iteration = 0
-        max_iterations = 15
+        # Step 2: Coding
+        await sio.emit('pipeline_update', {
+            'current_stage': 'coding',
+            'active_agent': 'CODER',
+            'progress_percent': 45,
+            'stage_description': 'Implementing feature code',
+        }, to=sid)
+        await stream_typing_indicator(sid, 'CODER', True)
+        await stream_agent_log(sid, 'CODER', 'Building project files and installing dependencies...', 'thought')
         
-        while response.hitl_checkpoint and not response.hitl_checkpoint.is_resolved and iteration < max_iterations:
-            iteration += 1
-            checkpoint = response.hitl_checkpoint
-            
-            await emit_smart_checkpoint(sid, checkpoint, orchestrator)
-            
-            decision = await hitl_handler.present_checkpoint(checkpoint)
-            
-            user_response = hitl_handler._pending.get(str(checkpoint.id), {}).get('input', '')
-            orchestrator.add_conversation_turn("user", user_response or f"Decision: {decision.value}")
-            
-            context.metadata["intake_complete"] = True
-            
-            # Stage progression with handoffs
-            stage_config = {
-                'gate_2_1': {
-                    'stage': 'planning',
-                    'agent': 'PLANNER',
-                    'progress': 25,
-                    'description': 'Creating engineering specification',
-                },
-                'gate_2_2': {
-                    'stage': 'coding',
-                    'agent': 'CODER',
-                    'progress': 45,
-                    'description': 'Implementing the feature',
-                },
-                'gate_2_3': {
-                    'stage': 'testing',
-                    'agent': 'TESTER',
-                    'progress': 65,
-                    'description': 'Creating and running tests',
-                },
-                'gate_2_4': {
-                    'stage': 'reviewing',
-                    'agent': 'REVIEWER',
-                    'progress': 80,
-                    'description': 'Reviewing code quality',
-                },
-                'gate_2_5': {
-                    'stage': 'finalizing',
-                    'agent': 'ORCHESTRATOR',
-                    'progress': 95,
-                    'description': 'Preparing final package',
-                },
-            }
-            
-            config = stage_config.get(checkpoint.gate_type.value, {
-                'stage': 'processing',
-                'agent': checkpoint.agent.value.upper(),
-                'progress': 50,
-                'description': 'Processing...',
-            })
-            
-            await sio.emit('pipeline_update', {
-                'current_stage': config['stage'],
-                'active_agent': config['agent'],
-                'progress_percent': config['progress'],
-                'stage_description': config['description'],
-            }, to=sid)
-            
-            # Show agent working
-            await stream_typing_indicator(sid, config['agent'], True)
-            await stream_agent_log(sid, config['agent'], f"Working on {config['description'].lower()}...", 'thought')
-            
-            # Record handoff
-            orchestrator.record_handoff(AgentHandoff(
-                from_agent=AgentRole.ORCHESTRATOR,
-                to_agent=AgentRole(config['agent'].lower()) if config['agent'] != 'ORCHESTRATOR' else AgentRole.ORCHESTRATOR,
-                reason=HandoffReason.TASK_COMPLETE,
-                context={"stage": config['stage']},
-            ))
-            
-            response = await orch_agent.execute(context)
-            await stream_typing_indicator(sid, config['agent'], False)
-            
-            orchestrator.add_conversation_turn(config['agent'].lower(), response.content)
+        coder_response = await orch_agent.coder.execute(context)
+        await stream_typing_indicator(sid, 'CODER', False)
+        await stream_agent_log(sid, 'CODER', coder_response.content, 'result')
         
+        context.metadata["code_output"] = coder_response.metadata.get("code_output", {})
+        
+        # Save generated project to filesystem (Kilo Code style)
+        try:
+            import os
+            project_dir = os.path.join(os.getcwd(), "output", "projects", sid)
+            code_output = coder_response.metadata.get("code_output", {})
+            all_files = {**code_output.get("files", {}), **code_output.get("tests", {}), **code_output.get("documentation", {})}
+            
+            if all_files:
+                saved_paths = save_project_files(project_dir, all_files)
+                await stream_agent_log(sid, 'SYSTEM', f'📂 Project files saved to `{project_dir}` ({len(saved_paths)} files)', 'action')
+        except Exception as fs_err:
+            logger.error(f"Failed to save project files: {fs_err}")
+        
+        # Step 3: Testing
+        await sio.emit('pipeline_update', {
+            'current_stage': 'testing',
+            'active_agent': 'TESTER',
+            'progress_percent': 70,
+            'stage_description': 'Validating implementation with tests',
+        }, to=sid)
+        await stream_typing_indicator(sid, 'TESTER', True)
+        await stream_agent_log(sid, 'TESTER', 'Running automated test suites...', 'thought')
+        
+        tester_response = await orch_agent.tester.execute(context)
+        await stream_typing_indicator(sid, 'TESTER', False)
+        await stream_agent_log(sid, 'TESTER', tester_response.content, 'result')
+        
+        context.metadata["test_output"] = tester_response.metadata
+        
+        # Step 4: Review
+        await sio.emit('pipeline_update', {
+            'current_stage': 'reviewing',
+            'active_agent': 'REVIEWER',
+            'progress_percent': 85,
+            'stage_description': 'Performing final code review',
+        }, to=sid)
+        await stream_typing_indicator(sid, 'REVIEWER', True)
+        await stream_agent_log(sid, 'REVIEWER', 'Checking for security and quality issues...', 'thought')
+        
+        reviewer_response = await orch_agent.reviewer.execute(context)
+        await stream_typing_indicator(sid, 'REVIEWER', False)
+        await stream_agent_log(sid, 'REVIEWER', reviewer_response.content, 'result')
+        
+        # Step 5: Finalization
         await sio.emit('pipeline_update', {
             'current_stage': 'complete',
             'active_agent': None,
             'progress_percent': 100,
-            'stage_description': 'Engineering complete!',
+            'stage_description': 'Engineering package complete!',
         }, to=sid)
         
-        await stream_agent_log(sid, 'ORCHESTRATOR', response.content, 'result')
-        await stream_agent_log(
-            sid, 
-            'SYSTEM', 
-            '✅ Engineering pipeline complete! Your code package is ready for GitHub PR creation.', 
-            'action'
-        )
+        # Final deployment checkpoint
+        await emit_next_steps_checkpoint(sid, orchestrator, pillar=2, brief_summary={})
 
     except Exception as e:
         logger.exception("Error in Pillar 2 pipeline")
@@ -825,11 +818,11 @@ async def run_pillar2_workflow(
 
 
 async def run_pillar3_workflow(
-    sid: str, 
-    session_state: SessionState, 
+    sid: str,
+    session_state: SessionState,
     hitl_handler: APIHITLHandler,
     orchestrator: IntelligentOrchestrator,
-    user_input: str, 
+    user_input: str,
     repo_path: Optional[str] = None
 ):
     """Executes Pillar 3 with intelligent orchestration."""
@@ -837,24 +830,47 @@ async def run_pillar3_workflow(
     
     orchestrator.add_conversation_turn("user", user_input)
     
+    # Create progress callback for real-time updates
+    async def progress_callback(stage: str, message: str, progress: int):
+        await sio.emit('pipeline_update', {
+            'current_stage': stage,
+            'active_agent': 'SAGE',
+            'progress_percent': progress,
+            'stage_description': message,
+        }, to=sid)
+        await stream_agent_log(sid, 'SAGE', message, 'thought')
+    
     context = AgentContext(
         session_state=session_state,
         conversation=session_state.pillar3_conversation,
         user_input=user_input,
-        metadata={"repository_path": repo_path} if repo_path else {}
+        metadata={
+            "repository_path": repo_path,
+            "progress_callback": progress_callback,
+        } if repo_path else {}
     )
     
     await stream_agent_log(sid, 'SAGE', f'Consulting the Codebase Oracle: {user_input}', 'action')
-    await sio.emit('pipeline_update', {
-        'current_stage': 'indexing',
-        'active_agent': 'SAGE',
-        'progress_percent': 20,
-        'stage_description': 'Analyzing codebase structure',
-    }, to=sid)
+    
+    # Initial progress update
+    if repo_path:
+        await sio.emit('pipeline_update', {
+            'current_stage': 'cloning',
+            'active_agent': 'SAGE',
+            'progress_percent': 5,
+            'stage_description': f'Connecting to repository: {repo_path}',
+        }, to=sid)
+        await stream_agent_log(sid, 'SAGE', f'🔗 Connecting to repository: {repo_path}', 'thought')
+    else:
+        await sio.emit('pipeline_update', {
+            'current_stage': 'indexing',
+            'active_agent': 'SAGE',
+            'progress_percent': 20,
+            'stage_description': 'Analyzing codebase structure',
+        }, to=sid)
 
     try:
         await stream_typing_indicator(sid, 'SAGE', True)
-        await stream_agent_log(sid, 'SAGE', 'Parsing codebase structure and mapping relationships...', 'thought')
         
         response = await sage.execute(context)
         await stream_typing_indicator(sid, 'SAGE', False)

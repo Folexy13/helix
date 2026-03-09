@@ -2,116 +2,47 @@
 CODER Agent
 
 Writes the actual code based on the approved plan. Uses Nova Multimodal
-Embeddings RAG (from Pillar 3) to understand the existing codebase and
-write code that matches its patterns, style, and conventions.
+Embeddings RAG (from Pillar 3) to understand the existing codebase.
 """
 
 import logging
 from typing import Any, Dict, List, Optional
 
-from src.agents.base import AgentContext, AgentResponse, BaseAgent, Tool
+from src.agents.base import AgentContext, AgentResponse, BaseAgent
 from src.core.models import AgentRole, CodeOutput, HITLDecision, HITLGateType, ReasoningEffort
 
 logger = logging.getLogger(__name__)
 
 CODER_SYSTEM_PROMPT = """You are the CODER agent for Helix's Engineering Workforce.
 
-Your role is to BUILD THE ENTIRE PROJECT autonomously - like Kilo Code agent.
-You don't ask questions, you just build.
+Your role is to BUILD THE ENTIRE PROJECT autonomously. You don't ask questions, you just build.
 
-## Your Responsibilities:
-1. **Create Project Structure**: Set up the entire project directory structure
-2. **Install Dependencies**: Generate package.json/requirements.txt with all deps
-3. **Write All Code**: Implement every file needed for the project
-4. **Configuration Files**: Create all config files (env, docker, etc.)
-5. **Database Setup**: Create migrations, seeds, schema files
-6. **API Implementation**: Build complete REST/GraphQL APIs
+Your Responsibilities:
+1. Create Project Structure: Set up the entire project directory structure
+2. Install Dependencies: Generate package.json or requirements.txt with all deps
+3. Write All Code: Implement every file needed for the project
+4. Configuration Files: Create all config files (env, docker, etc.)
+5. API Implementation: Build complete REST APIs
 
-## CRITICAL RULES:
+CRITICAL RULES:
 - NEVER ask questions - just build
 - ALWAYS provide COMPLETE files - no placeholders
-- ALWAYS include package.json/requirements.txt
+- ALWAYS include package.json or requirements.txt
 - ALWAYS include .env.example
-- ALWAYS include README.md with setup instructions
-- ALWAYS include Dockerfile if applicable
 - Build EVERYTHING the project needs to run
 
-## Output Format:
-For EVERY file in the project:
+Output Format:
+For each file, provide the file path and complete content.
+Include: source files, config files, package.json/requirements.txt, .env.example
 
-```
-### 📁 File: [path/to/file.ext]
-
-\`\`\`language
-[COMPLETE file content - no placeholders]
-\`\`\`
-```
-
-## Project Setup Files (ALWAYS include):
-
-### package.json (for Node.js projects)
-\`\`\`json
-{
-  "name": "project-name",
-  "version": "1.0.0",
-  "scripts": {
-    "dev": "...",
-    "build": "...",
-    "start": "...",
-    "test": "..."
-  },
-  "dependencies": { ... },
-  "devDependencies": { ... }
-}
-\`\`\`
-
-### requirements.txt (for Python projects)
-\`\`\`
-flask==2.3.0
-sqlalchemy==2.0.0
-...
-\`\`\`
-
-### .env.example
-\`\`\`
-DATABASE_URL=postgresql://user:pass@localhost:5432/db
-JWT_SECRET=your-secret-here
-...
-\`\`\`
-
-### Dockerfile
-\`\`\`dockerfile
-FROM node:20-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-CMD ["npm", "start"]
-\`\`\`
-
-### docker-compose.yml
-\`\`\`yaml
-version: '3.8'
-services:
-  app:
-    build: .
-    ports:
-      - "3000:3000"
-  db:
-    image: postgres:15
-    ...
-\`\`\`
-
-## Code Quality:
+Code Quality:
 - Write production-ready code
 - Include proper error handling
 - Add input validation
 - Use TypeScript/type hints
 - Follow best practices
-- Make it actually work!
 
-REMEMBER: You are building a COMPLETE, RUNNABLE project. Not a skeleton."""
+You are building a COMPLETE, RUNNABLE project. Not a skeleton."""
 
 
 class CoderAgent(BaseAgent):
@@ -130,86 +61,7 @@ class CoderAgent(BaseAgent):
             reasoning_effort=ReasoningEffort.MEDIUM,
         )
         
-        # Register CODER-specific tools
-        self._register_coder_tools()
-    
-    def _register_coder_tools(self) -> None:
-        """Register tools specific to CODER."""
-        
-        # File write tool
-        self.register_tool(Tool(
-            name="file_write",
-            description="Write content to a file",
-            parameters={
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Content to write",
-                },
-            },
-            handler=self._file_write,
-        ))
-        
-        # File read tool
-        self.register_tool(Tool(
-            name="file_read",
-            description="Read content from a file",
-            parameters={
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file",
-                },
-            },
-            handler=self._file_read,
-        ))
-        
-        # Code search tool
-        self.register_tool(Tool(
-            name="search_codebase",
-            description="Search the codebase for patterns or references",
-            parameters={
-                "query": {
-                    "type": "string",
-                    "description": "Search query",
-                },
-                "file_pattern": {
-                    "type": "string",
-                    "description": "File pattern to search (e.g., *.py)",
-                },
-            },
-            handler=self._search_codebase,
-        ))
-    
-    async def _file_write(self, path: str, content: str) -> Dict[str, Any]:
-        """Write content to a file."""
-        # In production, this would actually write to the filesystem
-        return {
-            "path": path,
-            "status": "written",
-            "bytes": len(content),
-        }
-    
-    async def _file_read(self, path: str) -> Dict[str, Any]:
-        """Read content from a file."""
-        # In production, this would read from the filesystem
-        return {
-            "path": path,
-            "content": "# File content would be here",
-            "status": "read",
-        }
-    
-    async def _search_codebase(self, query: str, file_pattern: str) -> Dict[str, Any]:
-        """Search the codebase."""
-        # In production, this would search the actual codebase
-        return {
-            "query": query,
-            "pattern": file_pattern,
-            "results": [],
-            "total_matches": 0,
-        }
+        # Specialist agents now operate autonomously without tool-calling overhead.
     
     async def execute(self, context: AgentContext) -> AgentResponse:
         """
@@ -261,10 +113,11 @@ Remember: Provide COMPLETE code, never use placeholders."""
 
         try:
             # Invoke model
+            # NOTE: use_tools=False to avoid "Model produced invalid sequence" errors
             response = await self.invoke_model(
                 prompt=coding_prompt,
                 context=context,
-                use_tools=True,
+                use_tools=False,
             )
             
             # Extract the code
@@ -274,27 +127,9 @@ Remember: Provide COMPLETE code, never use placeholders."""
             # Parse into structured output
             code_output = self._parse_code_output(code_text)
             
-            # Create HITL checkpoint for mid-task interruption (Gate 2.3)
-            # This allows the user to interrupt and provide feedback
-            checkpoint = self.create_hitl_checkpoint(
-                gate_type=HITLGateType.MID_TASK_INTERRUPT,
-                prompt=f"""CODER has generated the following code:
-
-**Files Created/Modified:** {len(code_output.files)}
-{chr(10).join(f'- {f}' for f in list(code_output.files.keys())[:5])}
-
-Would you like to:
-- **Approve**: Continue to testing
-- **Edit**: Modify the generated code
-- **Reject**: Regenerate with different approach""",
-                options=[HITLDecision.APPROVE, HITLDecision.EDIT, HITLDecision.REJECT],
-                metadata={"code_output": code_output.model_dump()},
-            )
-            
             return self.format_response(
                 content=code_text,
                 reasoning=reasoning,
-                hitl_checkpoint=checkpoint,
                 metadata={
                     "files_created": list(code_output.files.keys()),
                     "file_count": len(code_output.files),

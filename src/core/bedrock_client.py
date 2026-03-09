@@ -46,6 +46,12 @@ class BedrockClient:
         self.region = region or settings.aws_region
         self.endpoint_url = endpoint_url or settings.bedrock_endpoint_url
         
+        # Validate endpoint URL if provided
+        if self.endpoint_url:
+            if not self.endpoint_url.startswith("https://"):
+                logger.warning(f"Invalid endpoint URL format: {self.endpoint_url}. Using default endpoint.")
+                self.endpoint_url = None
+        
         # Configure boto3 client
         config = Config(
             region_name=self.region,
@@ -66,7 +72,7 @@ class BedrockClient:
         prompt: str,
         system_prompt: Optional[str] = None,
         messages: Optional[List[Dict[str, str]]] = None,
-        model_id: str = NovaModel.NOVA_LITE.value,
+        model_id: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -90,6 +96,10 @@ class BedrockClient:
         Returns:
             Response dictionary with generated text and metadata
         """
+        # Use config model ID if not specified
+        if model_id is None:
+            model_id = settings.nova_lite_model_id
+        
         # Build messages array
         if messages is None:
             messages = []
@@ -126,11 +136,17 @@ class BedrockClient:
         if tools:
             request_body["toolConfig"] = {"tools": tools}
         
+        import asyncio
+        
         try:
-            response = self._client.converse(
-                modelId=model_id,
-                **request_body,
-            )
+            # Run synchronous boto3 call in thread pool to avoid blocking
+            def _converse():
+                return self._client.converse(
+                    modelId=model_id,
+                    **request_body,
+                )
+            
+            response = await asyncio.to_thread(_converse)
             
             # Extract response content
             output = response.get("output", {})
@@ -168,7 +184,7 @@ class BedrockClient:
         prompt: str,
         system_prompt: Optional[str] = None,
         messages: Optional[List[Dict[str, str]]] = None,
-        model_id: str = NovaModel.NOVA_LITE.value,
+        model_id: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         max_tokens: Optional[int] = None,
@@ -179,6 +195,10 @@ class BedrockClient:
         
         Yields text chunks as they are generated.
         """
+        # Use config model ID if not specified
+        if model_id is None:
+            model_id = settings.nova_lite_model_id
+        
         # Build messages array
         if messages is None:
             messages = []
@@ -227,45 +247,55 @@ class BedrockClient:
         self,
         inputs: Union[str, List[str], bytes, List[bytes]],
         input_type: str = "text",
-        model_id: str = NovaModel.NOVA_EMBEDDINGS.value,
+        model_id: Optional[str] = None,
     ) -> List[List[float]]:
         """
-        Generate embeddings using Nova Multimodal Embeddings.
+        Generate embeddings using Titan Text Embeddings.
         
         Args:
-            inputs: Text strings, image bytes, or mixed inputs
-            input_type: Type of input ("text", "image", "document")
+            inputs: Text strings (image embeddings not supported with Titan text model)
+            input_type: Type of input ("text" only for Titan text model)
             model_id: Model ID to use
             
         Returns:
             List of embedding vectors
         """
+        import asyncio
+        
+        # Use config model ID if not specified
+        if model_id is None:
+            model_id = settings.nova_embeddings_model_id
+        
+        # Titan text embedding model only supports text
+        if input_type == "image":
+            logger.warning("Image embeddings not supported with Titan text embedding model")
+            return []
+        
         if isinstance(inputs, (str, bytes)):
             inputs = [inputs]
         
         embeddings = []
         
         for input_item in inputs:
-            # Build input based on type
-            if input_type == "text":
-                input_body = {
-                    "inputText": input_item if isinstance(input_item, str) else input_item.decode(),
-                }
-            elif input_type == "image":
-                import base64
-                input_body = {
-                    "inputImage": base64.b64encode(input_item).decode() if isinstance(input_item, bytes) else input_item,
-                }
-            else:
-                input_body = {"inputText": str(input_item)}
+            # Build input for Titan text embedding model
+            if isinstance(input_item, bytes):
+                input_item = input_item.decode('utf-8', errors='ignore')
+            
+            input_body = {
+                "inputText": str(input_item),
+            }
             
             try:
-                response = self._client.invoke_model(
-                    modelId=model_id,
-                    body=json.dumps(input_body),
-                    contentType="application/json",
-                    accept="application/json",
-                )
+                # Run synchronous boto3 call in thread pool to avoid blocking
+                def _invoke():
+                    return self._client.invoke_model(
+                        modelId=model_id,
+                        body=json.dumps(input_body),
+                        contentType="application/json",
+                        accept="application/json",
+                    )
+                
+                response = await asyncio.to_thread(_invoke)
                 
                 response_body = json.loads(response["body"].read())
                 embedding = response_body.get("embedding", [])
@@ -273,7 +303,8 @@ class BedrockClient:
                 
             except Exception as e:
                 logger.error(f"Error generating embedding: {e}")
-                raise
+                # Return empty embedding instead of raising to allow indexing to continue
+                embeddings.append([])
         
         return embeddings
     

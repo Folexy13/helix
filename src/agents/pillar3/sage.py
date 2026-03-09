@@ -237,26 +237,138 @@ class SageAgent(BaseAgent):
             "recommendation": f"Changes to {target} may affect {len(affected_files)} files. Review carefully.",
         }
     
+    async def _resolve_repo_path(self, repo_path: str) -> str:
+        """
+        Resolve a repository path, cloning from GitHub if needed.
+        
+        Args:
+            repo_path: Local path or GitHub URL
+            
+        Returns:
+            Local path to the repository
+        """
+        import asyncio
+        import os
+        import re
+        import subprocess
+        import tempfile
+        from pathlib import Path
+        
+        # Fix URL if it has single slash (https:/ instead of https://)
+        if repo_path.startswith("https:/") and not repo_path.startswith("https://"):
+            repo_path = repo_path.replace("https:/", "https://", 1)
+        
+        # Check if it's a GitHub URL (more flexible pattern)
+        github_patterns = [
+            r'^https?://github\.com/([^/]+)/([^/\?#]+)',  # More flexible - captures owner/repo
+            r'^git@github\.com:([^/]+)/([^/\?#]+)',
+        ]
+        
+        for pattern in github_patterns:
+            match = re.match(pattern, repo_path)
+            if match:
+                owner, repo_name = match.groups()
+                repo_name = repo_name.rstrip('.git').rstrip('/')
+                
+                # Create a directory for cloned repos
+                clone_base = Path("/tmp/helix_repos")
+                clone_base.mkdir(parents=True, exist_ok=True)
+                
+                clone_path = clone_base / f"{owner}_{repo_name}"
+                
+                # Check if already cloned
+                if clone_path.exists() and (clone_path / ".git").exists():
+                    logger.info(f"Repository already cloned at {clone_path}")
+                    # Pull latest changes asynchronously
+                    try:
+                        process = await asyncio.create_subprocess_exec(
+                            "git", "pull",
+                            cwd=str(clone_path),
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        await asyncio.wait_for(process.communicate(), timeout=60)
+                    except Exception as e:
+                        logger.warning(f"Failed to pull latest changes: {e}")
+                    return str(clone_path)
+                
+                # Clone the repository - construct clean URL
+                clone_url = f"https://github.com/{owner}/{repo_name}.git"
+                logger.info(f"Cloning repository from {clone_url} to {clone_path}")
+                
+                try:
+                    # Use async subprocess to avoid blocking
+                    process = await asyncio.create_subprocess_exec(
+                        "git", "clone", "--depth", "1", clone_url, str(clone_path),
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+                    
+                    if process.returncode != 0:
+                        raise ValueError(f"Failed to clone repository: {stderr.decode()}")
+                    
+                    logger.info(f"Successfully cloned repository to {clone_path}")
+                    return str(clone_path)
+                    
+                except asyncio.TimeoutError:
+                    raise ValueError("Repository clone timed out. Please try again.")
+                except Exception as e:
+                    raise ValueError(f"Failed to clone repository: {e}")
+        
+        # Check if it's a local path that exists
+        local_path = Path(repo_path)
+        if local_path.exists():
+            return repo_path
+        
+        # Invalid path - provide helpful error
+        raise ValueError(
+            f"Invalid repository path: '{repo_path}'. "
+            "Please provide a valid GitHub URL (e.g., https://github.com/owner/repo) "
+            "or a local directory path."
+        )
+    
     async def index_repository(
         self,
         repo_path: str,
         exclude_patterns: Optional[List[str]] = None,
+        progress_callback: Optional[Any] = None,
     ) -> CodebaseIndex:
         """
         Index a repository for SAGE to understand.
         
         This should be called before asking questions about a codebase.
+        Supports both local paths and GitHub URLs.
+        
+        Args:
+            repo_path: Local path or GitHub URL
+            exclude_patterns: Patterns to exclude from indexing
+            progress_callback: Async callback for progress updates (stage, message, progress)
         """
         logger.info(f"SAGE indexing repository: {repo_path}")
         
-        # Index the repository
+        # Progress helper
+        async def update_progress(stage: str, message: str, progress: int):
+            if progress_callback:
+                await progress_callback(stage, message, progress)
+        
+        # Check if it's a GitHub URL and clone if needed
+        await update_progress("cloning", "🔄 Resolving repository path...", 10)
+        local_path = await self._resolve_repo_path(repo_path)
+        await update_progress("cloning", "✅ Repository ready for indexing", 20)
+        
+        # Index the repository with progress updates
+        await update_progress("indexing", "📂 Scanning files...", 25)
         index = await self.indexer.index_repository(
-            repo_path,
+            local_path,
             exclude_patterns=set(exclude_patterns) if exclude_patterns else None,
+            progress_callback=progress_callback,
         )
         
         # Build the RAG index
+        await update_progress("building", "🔍 Building search index...", 85)
         self.rag.build_index()
+        await update_progress("complete", "✅ Codebase indexed successfully!", 90)
         
         # Store the index
         self._indexed_repos[repo_path] = index
@@ -275,12 +387,15 @@ class SageAgent(BaseAgent):
         """
         logger.info(f"SAGE answering: {context.user_input[:100]}...")
         
+        # Get progress callback from context if available
+        progress_callback = context.metadata.get("progress_callback")
+        
         # Check if we have an indexed codebase
         if not self._indexed_repos:
             # Check if there's a repo path in context
             repo_path = context.metadata.get("repository_path")
             if repo_path:
-                await self.index_repository(repo_path)
+                await self.index_repository(repo_path, progress_callback=progress_callback)
             else:
                 return self.format_response(
                     content="I don't have a codebase indexed yet. Please connect a repository first.",
@@ -290,8 +405,15 @@ class SageAgent(BaseAgent):
         # Retrieve relevant context
         results = await self.rag.retrieve(context.user_input)
         
-        # Check if we found relevant code
-        if not results or all(r.score < 0.3 for r in results):
+        # Log retrieval results for debugging
+        if results:
+            logger.info(f"Retrieved {len(results)} results, best score: {results[0].score:.3f}")
+        else:
+            logger.warning("No results retrieved from RAG")
+        
+        # Check if we found relevant code (lowered threshold from 0.3 to 0.1)
+        # Cosine similarity can be low even for relevant results depending on embedding model
+        if not results or all(r.score < 0.1 for r in results):
             # Low confidence - escalate to user (HITL Gate 3.3)
             checkpoint = self.create_hitl_checkpoint(
                 gate_type=HITLGateType.UNCERTAINTY_ESCALATION,

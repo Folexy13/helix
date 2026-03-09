@@ -107,8 +107,8 @@ class OrchestratorAgent(BaseAgent):
             "review": None,
         }
         
-        # Register ORCHESTRATOR-specific tools
-        self._register_orchestrator_tools()
+        # NOTE: Tools disabled to avoid "Model produced invalid sequence" errors
+        # self._register_orchestrator_tools()
     
     def _register_orchestrator_tools(self) -> None:
         """Register tools specific to ORCHESTRATOR."""

@@ -71,6 +71,10 @@ class CodebaseIndexer:
         ".venv", "venv", "env", ".env", "dist", "build",
         ".idea", ".vscode", ".DS_Store", "*.pyc", "*.pyo",
         "*.egg-info", ".pytest_cache", ".mypy_cache",
+        # Large generated files
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "Cargo.lock", "poetry.lock", "Pipfile.lock",
+        ".next", "coverage", "*.min.js", "*.min.css",
     }
     
     def __init__(
@@ -101,6 +105,7 @@ class CodebaseIndexer:
         self,
         repo_path: str,
         exclude_patterns: Optional[Set[str]] = None,
+        progress_callback: Optional[Any] = None,
     ) -> CodebaseIndex:
         """
         Index an entire repository.
@@ -108,13 +113,22 @@ class CodebaseIndexer:
         Args:
             repo_path: Path to the repository
             exclude_patterns: Additional patterns to exclude
+            progress_callback: Async callback for progress updates (stage, message, progress)
             
         Returns:
             CodebaseIndex with indexing information
         """
         logger.info(f"Indexing repository: {repo_path}")
         
-        repo_path = Path(repo_path)
+        # Validate repo_path is a clean path string
+        repo_path_str = str(repo_path)
+        if any(x in repo_path_str for x in ['INFO:', 'ERROR:', 'websocket', '[accepted]', 'connection']):
+            raise ValueError(f"Repository path appears to be corrupted with log output. Please provide a valid path.")
+        
+        if len(repo_path_str) > 500:
+            raise ValueError(f"Repository path is too long ({len(repo_path_str)} chars). Please provide a valid path.")
+        
+        repo_path = Path(repo_path_str)
         if not repo_path.exists():
             raise ValueError(f"Repository path does not exist: {repo_path}")
         
@@ -140,17 +154,53 @@ class CodebaseIndexer:
         
         logger.info(f"Found {len(files_to_index)} files to index")
         
+        # Progress helper
+        async def update_progress(stage: str, message: str, progress: int):
+            if progress_callback:
+                await progress_callback(stage, message, progress)
+        
+        # Limit number of files to index for performance
+        MAX_FILES = 100
+        if len(files_to_index) > MAX_FILES:
+            logger.warning(f"Limiting indexing to {MAX_FILES} files (found {len(files_to_index)})")
+            await update_progress("indexing", f"📁 Found {len(files_to_index)} files, limiting to {MAX_FILES}", 30)
+            # Prioritize important files
+            priority_extensions = {'.py', '.js', '.ts', '.tsx', '.jsx', '.md', '.json'}
+            priority_files = [f for f in files_to_index if f.suffix in priority_extensions]
+            other_files = [f for f in files_to_index if f.suffix not in priority_extensions]
+            files_to_index = (priority_files + other_files)[:MAX_FILES]
+        else:
+            await update_progress("indexing", f"📁 Found {len(files_to_index)} files to index", 30)
+        
         # Index each file
         total_chunks = 0
         indexed_files = []
         
-        for file_path in files_to_index:
+        import asyncio
+        total_files = len(files_to_index)
+        for i, file_path in enumerate(files_to_index):
             try:
+                # Emit progress every 10 files
+                if i % 10 == 0:
+                    progress_pct = 30 + int((i / total_files) * 50)  # 30-80%
+                    await update_progress(
+                        "indexing",
+                        f"📄 Indexing file {i+1}/{total_files}: {file_path.name}",
+                        progress_pct
+                    )
+                    logger.info(f"Indexing progress: {i}/{total_files} files")
+                
                 chunks = await self._index_file(file_path, repo_path)
                 total_chunks += len(chunks)
                 indexed_files.append(str(file_path.relative_to(repo_path)))
+                
+                # Yield control every 3 files to prevent blocking
+                if i % 3 == 0:
+                    await asyncio.sleep(0)
             except Exception as e:
                 logger.warning(f"Failed to index {file_path}: {e}")
+        
+        await update_progress("indexing", f"✅ Indexed {len(indexed_files)} files, {total_chunks} chunks", 80)
         
         # Create index record
         index = CodebaseIndex(
@@ -250,6 +300,12 @@ class CodebaseIndexer:
         except UnicodeDecodeError:
             return []
         
+        # Skip very large config files (like package-lock.json)
+        MAX_CONFIG_SIZE = 50000
+        if len(content) > MAX_CONFIG_SIZE:
+            logger.warning(f"Config file too large ({len(content)} chars), truncating: {relative_path}")
+            content = content[:MAX_CONFIG_SIZE]
+        
         # Config files are usually small, index as single chunk
         chunk = CodeChunk(
             file_path=relative_path,
@@ -274,9 +330,10 @@ class CodebaseIndexer:
         relative_path: str,
     ) -> List[CodeChunk]:
         """
-        Index an image file using Nova Multimodal Embeddings.
+        Index an image file.
         
-        This allows SAGE to understand architecture diagrams and screenshots.
+        Note: Image embeddings are not supported with Titan text embedding model.
+        Images are indexed with metadata only for now.
         """
         try:
             image_bytes = file_path.read_bytes()
@@ -284,14 +341,15 @@ class CodebaseIndexer:
             logger.warning(f"Could not read image {file_path}: {e}")
             return []
         
-        # Generate embedding for image
-        embedding = await self._generate_image_embedding(image_bytes)
+        # Skip image embedding - Titan text model doesn't support images
+        # Just store metadata about the image
+        logger.info(f"Skipping image embedding (not supported): {relative_path}")
         
         chunk = CodeChunk(
             file_path=relative_path,
             content=f"[Image: {relative_path}]",
             chunk_type="image",
-            embedding=embedding,
+            embedding=None,  # No embedding for images with text model
             metadata={"size_bytes": len(image_bytes)},
         )
         
@@ -409,6 +467,13 @@ class CodebaseIndexer:
     
     async def _generate_embedding(self, text: str) -> List[float]:
         """Generate embedding for text using Nova Multimodal Embeddings."""
+        # Nova embedding model has a max input length of 50,000 characters
+        MAX_EMBEDDING_LENGTH = 48000  # Leave some buffer
+        
+        if len(text) > MAX_EMBEDDING_LENGTH:
+            logger.warning(f"Text too long for embedding ({len(text)} chars), truncating to {MAX_EMBEDDING_LENGTH}")
+            text = text[:MAX_EMBEDDING_LENGTH]
+        
         try:
             embeddings = await self.bedrock_client.generate_embeddings(
                 inputs=text,

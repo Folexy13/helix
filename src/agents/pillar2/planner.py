@@ -2,156 +2,38 @@
 PLANNER Agent
 
 Uses Nova 2 Lite with extended thinking (`high` budget) to decompose
-plain English requests into structured engineering specs: tasks, subtasks,
-dependencies, acceptance criteria, and estimated complexity.
+plain English requests into structured engineering specs.
 """
 
 import logging
 from typing import Any, Dict, List, Optional
 
-from src.agents.base import AgentContext, AgentResponse, BaseAgent, Tool
+from src.agents.base import AgentContext, AgentResponse, BaseAgent
 from src.core.models import AgentRole, EngineeringSpec, HITLDecision, HITLGateType, ReasoningEffort
 
 logger = logging.getLogger(__name__)
 
 PLANNER_SYSTEM_PROMPT = """You are the PLANNER agent for Helix's Engineering Workforce.
 
-Your role is to create COMPREHENSIVE engineering documentation including:
-- ERD (Entity Relationship Diagrams) in Mermaid format
-- UML diagrams (Class, Sequence, Component) in Mermaid format
-- Architecture diagrams in Mermaid format
-- Detailed engineering specifications
+Your role is to create engineering documentation and specifications.
 
-## Your Responsibilities:
-1. **Architecture Design**: Design the system architecture
-2. **Database Design**: Create ERD with all entities and relationships
-3. **Class Design**: Create UML class diagrams
-4. **Flow Design**: Create sequence diagrams for key flows
-5. **Task Decomposition**: Break down into implementable tasks
-6. **Dependency Mapping**: Identify dependencies between tasks
+Your Responsibilities:
+1. Architecture Design: Design the system architecture
+2. Database Design: Create ERD with all entities and relationships
+3. Task Decomposition: Break down into implementable tasks
+4. Dependency Mapping: Identify dependencies between tasks
 
-## Your Output Format:
-ALWAYS include these sections:
+Output Format:
+Include these sections:
+- Architecture Overview: Describe the system components and how they connect
+- Database Design: List all entities with their fields and relationships
+- Implementation Tasks: List tasks with files to create, dependencies, and complexity
+- Project Structure: Show the directory structure
+- Dependencies: List all packages needed
+- Environment Variables: List all env vars needed
 
-```markdown
-## 🏗️ Architecture Overview
-
-### System Architecture
-\`\`\`mermaid
-graph TB
-    subgraph Frontend
-        UI[React/Next.js UI]
-        State[State Management]
-    end
-    subgraph Backend
-        API[REST API]
-        Auth[Authentication]
-        BL[Business Logic]
-    end
-    subgraph Database
-        DB[(PostgreSQL/MongoDB)]
-    end
-    UI --> API
-    API --> Auth
-    API --> BL
-    BL --> DB
-\`\`\`
-
-### Component Diagram
-\`\`\`mermaid
-graph LR
-    [Component relationships]
-\`\`\`
-
-## 📊 Database Design (ERD)
-
-\`\`\`mermaid
-erDiagram
-    USER ||--o{ ORDER : places
-    USER {
-        int id PK
-        string email
-        string password_hash
-        datetime created_at
-    }
-    ORDER ||--|{ ORDER_ITEM : contains
-    ORDER {
-        int id PK
-        int user_id FK
-        decimal total
-        string status
-    }
-    [... all entities ...]
-\`\`\`
-
-## 📐 UML Class Diagram
-
-\`\`\`mermaid
-classDiagram
-    class User {
-        +int id
-        +string email
-        +create()
-        +authenticate()
-    }
-    [... all classes ...]
-\`\`\`
-
-## 🔄 Sequence Diagrams
-
-### User Registration Flow
-\`\`\`mermaid
-sequenceDiagram
-    participant U as User
-    participant F as Frontend
-    participant A as API
-    participant D as Database
-    U->>F: Fill registration form
-    F->>A: POST /api/register
-    A->>D: Insert user
-    D-->>A: User created
-    A-->>F: Success + JWT
-    F-->>U: Redirect to dashboard
-\`\`\`
-
-## 📋 Implementation Tasks
-
-### Task 1: [Name]
-- **Files**: [List of files to create]
-- **Dependencies**: [What this depends on]
-- **Acceptance Criteria**: [Clear criteria]
-- **Complexity**: [Low/Medium/High]
-
-[... more tasks ...]
-
-## 🗂️ Project Structure
-
-\`\`\`
-project/
-├── src/
-│   ├── components/
-│   ├── pages/
-│   ├── api/
-│   ├── models/
-│   └── utils/
-├── tests/
-├── docs/
-├── package.json
-└── README.md
-\`\`\`
-
-## 📦 Dependencies
-
-- [List all npm/pip packages needed]
-
-## 🔧 Environment Variables
-
-- [List all env vars needed]
-```
-
-## CRITICAL RULES:
-- ALWAYS include Mermaid diagrams - they are essential
-- ALWAYS include ERD for any project with data
+CRITICAL RULES:
+- ALWAYS include database schema design
 - ALWAYS include project structure
 - ALWAYS list dependencies
 - Be specific and actionable
@@ -174,127 +56,8 @@ class PlannerAgent(BaseAgent):
             reasoning_effort=ReasoningEffort.HIGH,  # Deep thinking for planning
         )
         
-        # Register PLANNER-specific tools
-        self._register_planner_tools()
-    
-    def _register_planner_tools(self) -> None:
-        """Register tools specific to PLANNER."""
-        
-        # Task decomposition tool
-        self.register_tool(Tool(
-            name="decompose_task",
-            description="Break down a high-level task into subtasks",
-            parameters={
-                "task_description": {
-                    "type": "string",
-                    "description": "The high-level task to decompose",
-                },
-                "context": {
-                    "type": "string",
-                    "description": "Additional context about the codebase or requirements",
-                },
-            },
-            handler=self._decompose_task,
-        ))
-        
-        # Complexity estimation tool
-        self.register_tool(Tool(
-            name="estimate_complexity",
-            description="Estimate the complexity of a task",
-            parameters={
-                "task": {
-                    "type": "string",
-                    "description": "Task description",
-                },
-                "factors": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Factors affecting complexity",
-                },
-            },
-            handler=self._estimate_complexity,
-        ))
-        
-        # Dependency analysis tool
-        self.register_tool(Tool(
-            name="analyze_dependencies",
-            description="Analyze dependencies between tasks",
-            parameters={
-                "tasks": {
-                    "type": "array",
-                    "items": {"type": "object"},
-                    "description": "List of tasks to analyze",
-                },
-            },
-            handler=self._analyze_dependencies,
-        ))
-    
-    async def _decompose_task(
-        self,
-        task_description: str,
-        context: str,
-    ) -> Dict[str, Any]:
-        """Decompose a high-level task into subtasks."""
-        return {
-            "original_task": task_description,
-            "subtasks": [
-                {"name": "Setup", "description": "Initial setup and configuration"},
-                {"name": "Core Implementation", "description": "Main functionality"},
-                {"name": "Error Handling", "description": "Handle edge cases"},
-                {"name": "Testing", "description": "Write tests"},
-                {"name": "Documentation", "description": "Document the implementation"},
-            ],
-            "estimated_total_hours": 8,
-        }
-    
-    async def _estimate_complexity(
-        self,
-        task: str,
-        factors: List[str],
-    ) -> Dict[str, Any]:
-        """Estimate task complexity."""
-        # Simple heuristic based on factors
-        complexity_score = len(factors) * 2
-        
-        if complexity_score <= 4:
-            complexity = "low"
-            hours = "1-2"
-        elif complexity_score <= 8:
-            complexity = "medium"
-            hours = "2-4"
-        else:
-            complexity = "high"
-            hours = "4-8"
-        
-        return {
-            "task": task,
-            "factors": factors,
-            "complexity": complexity,
-            "estimated_hours": hours,
-            "confidence": "medium",
-        }
-    
-    async def _analyze_dependencies(
-        self,
-        tasks: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
-        """Analyze task dependencies."""
-        # Build dependency graph
-        dependency_order = []
-        for i, task in enumerate(tasks):
-            dependency_order.append({
-                "task": task.get("name", f"Task {i+1}"),
-                "order": i + 1,
-                "depends_on": task.get("dependencies", []),
-                "blocks": [],
-            })
-        
-        return {
-            "tasks_analyzed": len(tasks),
-            "dependency_order": dependency_order,
-            "critical_path": [t["task"] for t in dependency_order],
-            "parallelizable": [],
-        }
+        # NOTE: Tools disabled to avoid "Model produced invalid sequence" errors
+        # Specialist agents will now operate autonomously without tool-calling overhead.
     
     async def execute(self, context: AgentContext) -> AgentResponse:
         """
@@ -336,10 +99,11 @@ Use extended thinking to reason through the problem thoroughly before providing 
 
         try:
             # Invoke model with HIGH extended thinking
+            # NOTE: use_tools=False to avoid "Model produced invalid sequence" errors
             response = await self.invoke_model(
                 prompt=planning_prompt,
                 context=context,
-                use_tools=True,
+                use_tools=False,
             )
             
             # Extract the specification
@@ -349,26 +113,9 @@ Use extended thinking to reason through the problem thoroughly before providing 
             # Parse into structured spec
             engineering_spec = self._parse_engineering_spec(context.user_input, spec_text)
             
-            # Create HITL checkpoint for spec approval (Gate 2.2)
-            checkpoint = self.create_hitl_checkpoint(
-                gate_type=HITLGateType.SPEC_APPROVAL,
-                prompt=f"""PLANNER has created the engineering specification. Please review:
-
-{spec_text[:1000]}...
-
-You can:
-- **Approve**: Proceed with implementation
-- **Edit**: Modify tasks or requirements
-- **Reorder**: Change the implementation order
-- **Reject**: Start over with different requirements""",
-                options=[HITLDecision.APPROVE, HITLDecision.EDIT, HITLDecision.REORDER, HITLDecision.REJECT],
-                metadata={"spec": engineering_spec.model_dump(), "full_spec": spec_text},
-            )
-            
             return self.format_response(
                 content=spec_text,
                 reasoning=reasoning,
-                hitl_checkpoint=checkpoint,
                 metadata={
                     "spec_id": str(engineering_spec.id),
                     "task_count": len(engineering_spec.tasks),

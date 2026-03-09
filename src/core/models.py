@@ -14,9 +14,11 @@ from pydantic import BaseModel, Field
 
 class NovaModel(str, Enum):
     """Available Amazon Nova models."""
-    NOVA_LITE = "amazon.nova-lite-v1:0"
-    NOVA_SONIC = "amazon.nova-pro-v1:0"
-    NOVA_EMBEDDINGS = "amazon.titan-embed-text-v2:0"
+    # Nova 2 models (latest)
+    NOVA_LITE = "amazon.nova-lite-v1:0"  # Nova Lite for text generation
+    NOVA_PRO = "amazon.nova-pro-v1:0"    # Nova Pro for advanced reasoning
+    NOVA_SONIC = "amazon.nova-sonic-v1:0"  # Nova Sonic for voice
+    NOVA_EMBEDDINGS = "amazon.titan-embed-text-v2:0"  # Titan for embeddings
 
 
 class ReasoningEffort(str, Enum):

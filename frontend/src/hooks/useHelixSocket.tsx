@@ -1,0 +1,254 @@
+"use client";
+
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback, ReactNode } from 'react';
+import { io, Socket } from 'socket.io-client';
+import { useHelixStore, AgentPersona, HitlCheckpoint, AgentHandoff } from '../store/helixStore';
+
+const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:8000';
+
+interface HelixSocketContextType {
+  isConnected: boolean;
+  sendHitlDecision: (checkpointId: string, decision: string, input?: string, fieldResponses?: Record<string, string>) => void;
+  startPipeline: (pillar: number, input: string, repo?: string) => void;
+  sendUserMessage: (message: string, targetAgent?: string) => void;
+  requestClarification: (agent: string, question: string) => void;
+}
+
+const HelixSocketContext = createContext<HelixSocketContextType | undefined>(undefined);
+
+export function HelixSocketProvider({ children }: { children: ReactNode }): React.JSX.Element {
+  const socketRef = useRef<Socket | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  
+  const storeRef = useRef(useHelixStore.getState());
+  
+  useEffect(() => {
+    const unsubscribe = useHelixStore.subscribe((state) => {
+      storeRef.current = state;
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    console.log('Global Socket: Initializing to:', SOCKET_URL);
+    const socketInstance = io(SOCKET_URL, {
+      reconnectionDelayMax: 10000,
+      transports: ['websocket', 'polling'],
+      autoConnect: true,
+    });
+
+    socketRef.current = socketInstance;
+
+    socketInstance.on('connect', () => {
+      console.log('Global Socket: Connected');
+      setIsConnected(true);
+    });
+
+    socketInstance.on('disconnect', (reason) => {
+      console.log('Global Socket: Disconnected, reason:', reason);
+      setIsConnected(false);
+    });
+
+    // Agent personas (sent on connect)
+    socketInstance.on('agent_personas', (personas: Record<string, AgentPersona>) => {
+      console.log('Global Socket: Received agent personas');
+      storeRef.current.setAgentPersonas(personas);
+    });
+
+    // Pipeline updates with enhanced info
+    socketInstance.on('pipeline_update', (data: {
+      current_stage: string;
+      active_agent: string | null;
+      progress_percent: number;
+      stage_description?: string;
+    }) => {
+      console.log('Global Socket: Pipeline Update', data);
+      storeRef.current.setPipelineUpdate(
+        data.current_stage, 
+        data.active_agent, 
+        data.progress_percent,
+        data.stage_description || ''
+      );
+    });
+
+    // Agent logs with persona
+    socketInstance.on('agent_log', (data: {
+      agent: string;
+      message: string;
+      type: 'thought' | 'action' | 'result' | 'error';
+      timestamp?: string;
+      persona?: AgentPersona;
+    }) => {
+      storeRef.current.addAgentLog({
+        agent: data.agent,
+        message: data.message,
+        type: data.type,
+        persona: data.persona,
+      });
+    });
+
+    // Enhanced HITL checkpoint
+    socketInstance.on('hitl_checkpoint', (data: HitlCheckpoint) => {
+      console.log('Global Socket: Received HITL checkpoint', data.id);
+      storeRef.current.addCheckpoint(data);
+    });
+    
+    // HITL resolved with context
+    socketInstance.on('hitl_resolved', (data: {
+      checkpoint_id: string;
+      decision?: string;
+      has_follow_up?: boolean;
+      context_summary?: string;
+    }) => {
+      console.log('Global Socket: HITL resolved', data.checkpoint_id);
+      storeRef.current.removeCheckpoint(data.checkpoint_id);
+    });
+
+    // Agent handoff events
+    socketInstance.on('agent_handoff', (data: AgentHandoff) => {
+      console.log('Global Socket: Agent handoff', data.from_agent, '->', data.to_agent);
+      storeRef.current.addHandoff(data);
+    });
+
+    // Typing indicators
+    socketInstance.on('agent_typing', (data: {
+      agent: string;
+      is_typing: boolean;
+      persona?: AgentPersona;
+    }) => {
+      storeRef.current.setAgentTyping(data.agent, data.is_typing);
+    });
+
+    // Message acknowledgment
+    socketInstance.on('message_received', (data: {
+      message_id: string;
+      intent: string;
+    }) => {
+      console.log('Global Socket: Message received', data.message_id, 'intent:', data.intent);
+    });
+
+    // Error handling
+    socketInstance.on('error', (data: { message: string }) => {
+      console.error('Global Socket: Error', data.message);
+      storeRef.current.addAgentLog({
+        agent: 'SYSTEM',
+        message: `Error: ${data.message}`,
+        type: 'error',
+      });
+    });
+
+    return () => {
+      console.log('Global Socket: Cleaning up');
+      socketInstance.disconnect();
+      socketRef.current = null;
+    };
+  }, []);
+
+  const sendHitlDecision = useCallback((
+    checkpointId: string, 
+    decision: string, 
+    input?: string,
+    fieldResponses?: Record<string, string>
+  ) => {
+    const socket = socketRef.current;
+    if (socket && socket.connected) {
+      console.log('Global Socket: Sending HITL decision', decision);
+      
+      // Add user's decision to conversation
+      storeRef.current.addConversationMessage({
+        speaker: 'user',
+        content: input || `Decision: ${decision}`,
+        type: 'message',
+        metadata: { decision, fieldResponses },
+      });
+      
+      socket.emit('hitl_decision', { 
+        checkpoint_id: checkpointId, 
+        decision, 
+        user_input: input,
+        field_responses: fieldResponses,
+      });
+      
+      // Optimistically remove locally
+      storeRef.current.removeCheckpoint(checkpointId);
+    } else {
+      console.warn('Global Socket: Cannot send decision, socket not connected');
+    }
+  }, []);
+
+  const startPipeline = useCallback((pillar: number, input: string, repo?: string) => {
+    const socket = socketRef.current;
+    if (socket && socket.connected) {
+      console.log('Global Socket: Starting pipeline', pillar);
+      storeRef.current.resetPipeline();
+      storeRef.current.setIsProcessing(true);
+      
+      // Add user's initial message to conversation
+      storeRef.current.addConversationMessage({
+        speaker: 'user',
+        content: input,
+        type: 'message',
+      });
+      
+      socket.emit('start_pipeline', { pillar, input, repo });
+    } else {
+      console.warn('Global Socket: Cannot start pipeline, socket not connected');
+    }
+  }, []);
+
+  const sendUserMessage = useCallback((message: string, targetAgent?: string) => {
+    const socket = socketRef.current;
+    if (socket && socket.connected) {
+      console.log('Global Socket: Sending user message');
+      
+      storeRef.current.addConversationMessage({
+        speaker: 'user',
+        content: message,
+        type: 'message',
+        metadata: { targetAgent },
+      });
+      
+      socket.emit('user_message', { message, target_agent: targetAgent });
+    } else {
+      console.warn('Global Socket: Cannot send message, socket not connected');
+    }
+  }, []);
+
+  const requestClarification = useCallback((agent: string, question: string) => {
+    const socket = socketRef.current;
+    if (socket && socket.connected) {
+      console.log('Global Socket: Requesting clarification from', agent);
+      
+      storeRef.current.addConversationMessage({
+        speaker: 'user',
+        content: `@${agent}: ${question}`,
+        type: 'message',
+        metadata: { targetAgent: agent, isQuestion: true },
+      });
+      
+      socket.emit('request_clarification', { agent, question });
+    } else {
+      console.warn('Global Socket: Cannot request clarification, socket not connected');
+    }
+  }, []);
+
+  return (
+    <HelixSocketContext.Provider value={{ 
+      isConnected, 
+      sendHitlDecision, 
+      startPipeline,
+      sendUserMessage,
+      requestClarification,
+    }}>
+      {children}
+    </HelixSocketContext.Provider>
+  );
+}
+
+export function useHelixSocket() {
+  const context = useContext(HelixSocketContext);
+  if (context === undefined) {
+    throw new Error('useHelixSocket must be used within a HelixSocketProvider');
+  }
+  return context;
+}
