@@ -364,13 +364,28 @@ export default function LivePreview({
       return;
     }
     
-    // Skip repetitive progress indicators
+    // Skip repetitive progress indicators (spinners)
     if (cleanOutput.match(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\s]+$/)) {
+      return;
+    }
+    
+    // Skip npm spinner characters (backslash, forward slash, pipe, dash patterns)
+    if (cleanOutput.match(/^[\\/|\-\s]+$/) || cleanOutput.match(/^[\\\/\|\-]{1,3}$/)) {
+      return;
+    }
+    
+    // Skip single character spinner frames
+    if (cleanOutput.length <= 2 && cleanOutput.match(/^[\\/\|\-\s]*$/)) {
       return;
     }
     
     // Skip lines that are just escape code remnants
     if (cleanOutput.match(/^\[?\d*[A-Za-z]?$/)) {
+      return;
+    }
+    
+    // Skip empty or whitespace-only lines
+    if (cleanOutput.match(/^\s*$/)) {
       return;
     }
     
@@ -380,18 +395,15 @@ export default function LivePreview({
       errorBufferRef.current.shift();
     }
     
-    // Check for build errors
+    // Check for build errors - only if not already fixing and no current error
     const buildError = parseBuildError(cleanOutput);
-    if (buildError && status !== 'fixing') {
+    if (buildError && status !== 'fixing' && !currentBuildError) {
       setCurrentBuildError(buildError);
       onBuildError?.(buildError);
       
       // Auto-fix if enabled and within attempt limit
-      if (autoFix && fixAttempts < MAX_FIX_ATTEMPTS) {
-        setStatus('fixing');
-        setFixAttempts(prev => prev + 1);
-        onRequestFix?.(buildError);
-      }
+      // Note: We don't auto-fix anymore - let user click the button
+      // This prevents infinite loops
     }
     
     setTerminalOutput(prev => [...prev.slice(-100), cleanOutput]); // Keep last 100 lines
@@ -401,7 +413,7 @@ export default function LivePreview({
     if (terminalRef.current) {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
-  }, [onTerminalOutput, parseNpmOutput, stripAnsiCodes, parseBuildError, status, autoFix, fixAttempts, onBuildError, onRequestFix]);
+  }, [onTerminalOutput, parseNpmOutput, stripAnsiCodes, parseBuildError, status, currentBuildError, onBuildError]);
 
   // Manual request fix function (for UI button)
   const requestManualFix = useCallback(() => {

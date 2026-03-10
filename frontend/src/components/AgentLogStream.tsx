@@ -479,7 +479,11 @@ function ConversationItem({ message, persona }: { message: ConversationMessage; 
   );
 }
 
-export default function AgentLogStream() {
+interface AgentLogStreamProps {
+  agentFilter?: string | null;
+}
+
+export default function AgentLogStream({ agentFilter }: AgentLogStreamProps) {
   const { conversation, agentPersonas, typingAgents, isProcessing, pendingCheckpoints } = useHelixStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -496,6 +500,15 @@ export default function AgentLogStream() {
 
   // Convert typing agents Set to array
   const typingAgentsArray = Array.from(typingAgents);
+  
+  // Filter conversation by agent if filter is set
+  const filteredConversation = agentFilter 
+    ? conversation.filter(msg => 
+        msg.speaker.toUpperCase() === agentFilter.toUpperCase() || 
+        msg.speaker === 'user' || 
+        msg.speaker === 'system'
+      )
+    : conversation;
 
   if (conversation.length === 0 && !isProcessing && pendingCheckpoints.length === 0) {
     return (
@@ -518,8 +531,21 @@ export default function AgentLogStream() {
       ref={scrollRef}
       className="h-full overflow-y-auto space-y-4 pr-2 custom-scrollbar"
     >
+      {/* Filter indicator */}
+      {agentFilter && (
+        <div className="sticky top-0 z-10 px-3 py-2 bg-slate-900/90 backdrop-blur-sm rounded-lg border border-slate-700/50 mb-2">
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-400">Showing output from:</span>
+            <span className="font-bold" style={{ color: getPersona(agentFilter)?.color || '#94a3b8' }}>
+              {agentFilter}
+            </span>
+            <span className="text-slate-500">({filteredConversation.length} messages)</span>
+          </div>
+        </div>
+      )}
+      
       {/* Conversation messages */}
-      {conversation.map((message) => (
+      {filteredConversation.map((message) => (
         <ConversationItem 
           key={message.id} 
           message={message} 

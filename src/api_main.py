@@ -1003,6 +1003,104 @@ async def run_pillar2_workflow(
             await stream_agent_log(sid, 'SYSTEM', '❌ Code rejected. Pipeline stopped.', 'error')
             return
         
+        # Handle MODIFY decision - loop back to CODER with user feedback
+        if coder_decision == HITLDecision.MODIFY:
+            # Get the user's modification request from the checkpoint
+            user_feedback = hitl_handler.get_last_user_input() or "Please make the requested changes."
+            
+            await stream_agent_log(sid, 'SYSTEM', '✏️ Modification requested. Routing back to CODER...', 'action')
+            
+            # Update context with modification request
+            context.metadata["modification_request"] = user_feedback
+            context.metadata["is_modification"] = True
+            
+            # Re-run CODER with modification context
+            await sio.emit('pipeline_update', {
+                'current_stage': 'coding',
+                'active_agent': 'CODER',
+                'progress_percent': 45,
+                'stage_description': 'Applying requested modifications',
+            }, to=sid)
+            await stream_typing_indicator(sid, 'CODER', True)
+            await stream_agent_log(sid, 'CODER', f'📝 Applying modifications: {user_feedback}', 'thought')
+            
+            # Execute CODER again with modification context
+            coder_response = await orch_agent.coder.execute(context)
+            await stream_typing_indicator(sid, 'CODER', False)
+            await stream_agent_log(sid, 'CODER', coder_response.content, 'result')
+            
+            # Update context with new code output
+            context.metadata["code_output"] = coder_response.metadata.get("code_output", {})
+            
+            # Save updated files
+            code_output = coder_response.metadata.get("code_output", {})
+            if code_output.get("files"):
+                try:
+                    project_id = await save_project_files(code_output["files"])
+                    await sio.emit('generated_files', {
+                        'project_id': project_id,
+                        'files': [
+                            {'path': path, 'content': content, 'status': 'written'}
+                            for path, content in code_output["files"].items()
+                        ]
+                    }, to=sid)
+                    await stream_agent_log(sid, 'SYSTEM', f'💾 Updated {len(code_output["files"])} files', 'action')
+                except Exception as fs_err:
+                    logger.error(f"Failed to save updated files: {fs_err}")
+            
+            # Create another checkpoint for the modified code
+            files_created = list(code_output.get("files", {}).keys())
+            modified_checkpoint = SmartCheckpoint(
+                gate_type=HITLGateType.REVIEWER_FLAG,
+                pillar=2,
+                agent=AgentRole.CODER,
+                prompt="Review the modified code before running tests",
+                options=[HITLDecision.APPROVE, HITLDecision.REJECT, HITLDecision.MODIFY],
+                context_summary=f'Modified {len(files_created)} files based on your feedback',
+            )
+            
+            hitl_handler.register_checkpoint(str(modified_checkpoint.id), modified_checkpoint)
+            
+            await sio.emit('hitl_checkpoint', {
+                'id': str(modified_checkpoint.id),
+                'gate_type': modified_checkpoint.gate_type.value,
+                'pillar': 2,
+                'agent': 'CODER',
+                'prompt': f'💻 **Code Modified**\n\nApplied your requested changes to {len(files_created)} files. Review the updated code before proceeding.',
+                'options': ['approve', 'reject', 'modify'],
+                'context_summary': f'Modified files: {", ".join(files_created[:5])}{"..." if len(files_created) > 5 else ""}',
+                'agent_persona': AGENT_PERSONAS.get('CODER'),
+                'allows_follow_up': True,
+                'next_step_options': [
+                    {
+                        'id': 'approve',
+                        'label': '✅ Approve & Run Tests',
+                        'description': 'Proceed to automated testing',
+                        'action': 'approve',
+                        'color': '#10b981',
+                    },
+                    {
+                        'id': 'modify',
+                        'label': '✏️ Request More Changes',
+                        'description': 'Ask for additional modifications',
+                        'action': 'modify',
+                        'color': '#f59e0b',
+                    },
+                ],
+                'timestamp': datetime.utcnow().isoformat(),
+            }, to=sid)
+            
+            # Wait for decision on modified code
+            modified_decision = await hitl_handler.present_checkpoint(modified_checkpoint)
+            
+            if modified_decision == HITLDecision.REJECT:
+                await stream_agent_log(sid, 'SYSTEM', '❌ Modified code rejected. Pipeline stopped.', 'error')
+                return
+            
+            # If still MODIFY, we could loop again, but for now proceed after one modification
+            if modified_decision == HITLDecision.MODIFY:
+                await stream_agent_log(sid, 'SYSTEM', '⚠️ Additional modifications requested. Please use the input field to describe changes, then approve when ready.', 'action')
+        
         await stream_agent_log(sid, 'SYSTEM', '✅ Code approved. Proceeding to testing...', 'action')
         
         # Step 3: Testing

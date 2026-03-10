@@ -39,7 +39,7 @@ const LivePreview = dynamic(() => import("@/components/LivePreview"), {
   ),
 });
 
-// Agent card with status
+// Agent card with status - clickable to filter output
 function AgentCard({ 
   icon, 
   name, 
@@ -48,6 +48,8 @@ function AgentCard({
   color,
   isActive,
   isComplete,
+  isSelected,
+  onClick,
 }: { 
   icon: React.ReactNode; 
   name: string; 
@@ -56,16 +58,23 @@ function AgentCard({
   color: string;
   isActive: boolean;
   isComplete: boolean;
+  isSelected?: boolean;
+  onClick?: () => void;
 }) {
   return (
-    <div className={cn(
-      "p-3 rounded-xl border transition-all duration-500",
-      isActive 
-        ? "border-white/30 bg-white/5 shadow-lg scale-[1.02]" 
-        : isComplete
-        ? "border-emerald-500/30 bg-emerald-500/5"
-        : "border-slate-800 bg-slate-900/30 opacity-60"
-    )}>
+    <div 
+      className={cn(
+        "p-3 rounded-xl border transition-all duration-500 cursor-pointer hover:scale-[1.02]",
+        isSelected
+          ? "border-white/50 bg-white/10 shadow-lg ring-2 ring-white/20"
+          : isActive 
+          ? "border-white/30 bg-white/5 shadow-lg scale-[1.02]" 
+          : isComplete
+          ? "border-emerald-500/30 bg-emerald-500/5 hover:border-emerald-500/50"
+          : "border-slate-800 bg-slate-900/30 opacity-60 hover:opacity-80 hover:border-slate-700"
+      )}
+      onClick={onClick}
+    >
       <div className="flex items-center gap-3">
         <div 
           className={cn(
@@ -74,7 +83,7 @@ function AgentCard({
           )}
           style={{ 
             backgroundColor: `${color}15`,
-            borderColor: `${color}30`,
+            borderColor: isSelected ? color : `${color}30`,
           }}
         >
           {icon}
@@ -84,12 +93,17 @@ function AgentCard({
             <span className="font-bold text-xs tracking-tight" style={{ color }}>
               {name}
             </span>
-            {isActive && (
+            {isSelected && (
+              <span className="text-[8px] px-1 py-0.5 rounded bg-white/20 text-white">
+                Viewing
+              </span>
+            )}
+            {isActive && !isSelected && (
               <span className="text-[8px] px-1 py-0.5 rounded bg-white/10 text-white animate-pulse">
                 Active
               </span>
             )}
-            {isComplete && (
+            {isComplete && !isSelected && (
               <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
                 Done
               </span>
@@ -176,6 +190,9 @@ export default function Pillar2Page() {
   // State for preview - hidden by default until coding starts
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [previewManuallyHidden, setPreviewManuallyHidden] = useState(false);
+  
+  // State for agent filtering - click an agent to see only their output
+  const [selectedAgentFilter, setSelectedAgentFilter] = useState<string | null>(null);
   
   // Compute whether to show preview based on coding activity
   const isCodingActive = activeAgent?.toUpperCase() === 'CODER';
@@ -338,6 +355,16 @@ export default function Pillar2Page() {
           </div>
           
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            {/* Clear filter button */}
+            {selectedAgentFilter && (
+              <button
+                onClick={() => setSelectedAgentFilter(null)}
+                className="w-full px-3 py-2 text-xs text-slate-400 bg-slate-800/50 rounded-lg hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
+              >
+                <span>✕</span>
+                <span>Show All Agents</span>
+              </button>
+            )}
             <AgentCard 
               icon={<FileCode className="w-4 h-4 text-cyan-400" />}
               name="PLANNER"
@@ -345,6 +372,8 @@ export default function Pillar2Page() {
               description="Creates engineering specs"
               color="#06b6d4"
               {...getAgentStatus('PLANNER')}
+              isSelected={selectedAgentFilter === 'PLANNER'}
+              onClick={() => setSelectedAgentFilter(selectedAgentFilter === 'PLANNER' ? null : 'PLANNER')}
             />
             <AgentCard 
               icon={<Code2 className="w-4 h-4 text-emerald-400" />}
@@ -353,6 +382,8 @@ export default function Pillar2Page() {
               description="Implements features"
               color="#10b981"
               {...getAgentStatus('CODER')}
+              isSelected={selectedAgentFilter === 'CODER'}
+              onClick={() => setSelectedAgentFilter(selectedAgentFilter === 'CODER' ? null : 'CODER')}
             />
             <AgentCard 
               icon={<TestTube className="w-4 h-4 text-amber-400" />}
@@ -361,6 +392,8 @@ export default function Pillar2Page() {
               description="Creates and runs tests"
               color="#f59e0b"
               {...getAgentStatus('TESTER')}
+              isSelected={selectedAgentFilter === 'TESTER'}
+              onClick={() => setSelectedAgentFilter(selectedAgentFilter === 'TESTER' ? null : 'TESTER')}
             />
             <AgentCard 
               icon={<BookOpen className="w-4 h-4 text-indigo-400" />}
@@ -369,6 +402,8 @@ export default function Pillar2Page() {
               description="Generates documentation"
               color="#6366f1"
               {...getAgentStatus('DOCS')}
+              isSelected={selectedAgentFilter === 'DOCS'}
+              onClick={() => setSelectedAgentFilter(selectedAgentFilter === 'DOCS' ? null : 'DOCS')}
             />
             <AgentCard 
               icon={<Search className="w-4 h-4 text-rose-400" />}
@@ -377,6 +412,8 @@ export default function Pillar2Page() {
               description="Reviews quality & security"
               color="#ef4444"
               {...getAgentStatus('REVIEWER')}
+              isSelected={selectedAgentFilter === 'REVIEWER'}
+              onClick={() => setSelectedAgentFilter(selectedAgentFilter === 'REVIEWER' ? null : 'REVIEWER')}
             />
           </div>
         </div>
@@ -429,7 +466,7 @@ export default function Pillar2Page() {
               showPreview && previewExpanded ? "h-1/3" : ""
             )}>
               <div className="flex-1 overflow-hidden p-4">
-                <AgentLogStream />
+                <AgentLogStream agentFilter={selectedAgentFilter} />
               </div>
             </div>
 
@@ -443,7 +480,6 @@ export default function Pillar2Page() {
                   files={generatedFiles}
                   projectType="react"
                   syncToLocal={hasWorkspaceAccess}
-                  autoFix={true}
                   onTerminalOutput={(output) => console.log('[Preview]', output)}
                   onError={(error) => console.error('[Preview Error]', error)}
                   onReady={(url) => console.log('[Preview Ready]', url)}
@@ -451,16 +487,16 @@ export default function Pillar2Page() {
                   onBuildError={(error) => console.log('[Build Error]', error)}
                   onRequestFix={(error) => {
                     // Send fix request to CODER agent
-                    const fixMessage = `[AUTO-FIX REQUEST] Build error detected:
-Type: ${error.type}
+                    const fixMessage = `[BUILD ERROR - FIX REQUIRED]
+                    
+Error Type: ${error.type}
 File: ${error.file || 'unknown'}
 ${error.line ? `Line: ${error.line}` : ''}
-Error: ${error.message}
 
-Full error output:
-${error.fullError}
+Error Message:
+${error.message}
 
-Please fix this error in the affected file.`;
+Please fix this error. The file "${error.file}" has an issue that needs to be resolved.`;
                     sendUserMessage(fixMessage);
                   }}
                   className="h-full"
