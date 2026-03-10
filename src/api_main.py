@@ -16,6 +16,7 @@ Enhanced with:
 
 import asyncio
 import logging
+import uuid
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -382,7 +383,18 @@ async def request_clarification(sid, data):
 
 
 async def emit_smart_checkpoint(sid: str, checkpoint, orchestrator: IntelligentOrchestrator):
-    """Emit an enhanced HITL checkpoint with smart features."""
+    """
+    Emit an enhanced HITL checkpoint with smart features.
+    
+    IMPORTANT: This function also registers the checkpoint with the HITL handler
+    to ensure proper blocking behavior when present_checkpoint is called.
+    """
+    # Register checkpoint with handler BEFORE emitting to frontend
+    handler = hitl_handlers.get(sid)
+    if handler:
+        handler.register_checkpoint(str(checkpoint.id), checkpoint)
+        logger.info(f"emit_smart_checkpoint: Registered checkpoint {checkpoint.id} with handler")
+    
     # Generate smart suggestions based on context
     suggestions = []
     if checkpoint.gate_type == HITLGateType.IDEA_CLARIFICATION:
@@ -657,11 +669,11 @@ async def run_pillar1_workflow(
             # Emit enhanced checkpoint
             await emit_smart_checkpoint(sid, checkpoint, orchestrator)
             
-            # Wait for user decision
+            # Wait for user decision - this BLOCKS until user responds
             decision = await hitl_handler.present_checkpoint(checkpoint)
             
-            # Get user input from handler
-            user_response = hitl_handler._pending.get(str(checkpoint.id), {}).get('input', '')
+            # Get user input from handler (stored before cleanup)
+            user_response = hitl_handler.get_last_user_input()
             
             # Add to conversation
             orchestrator.add_conversation_turn("user", user_response or f"Decision: {decision.value}")
@@ -766,11 +778,11 @@ async def run_pillar2_workflow(
         await sio.emit('pipeline_update', {
             'current_stage': 'planning',
             'active_agent': 'PLANNER',
-            'progress_percent': 20,
+            'progress_percent': 15,
             'stage_description': 'Designing architecture and specifications',
         }, to=sid)
         await stream_typing_indicator(sid, 'PLANNER', True)
-        await stream_agent_log(sid, 'PLANNER', 'Creating ERD, UML, and Architecture diagrams...', 'thought')
+        await stream_agent_log(sid, 'PLANNER', '📐 Creating architecture, database schema, and project structure...', 'thought')
         
         planner_response = await orch_agent.planner.execute(context)
         await stream_typing_indicator(sid, 'PLANNER', False)
@@ -779,11 +791,63 @@ async def run_pillar2_workflow(
         context.metadata["engineering_spec"] = planner_response.metadata
         context.metadata["spec_text"] = planner_response.content
         
+        # HITL Checkpoint: Review Planning before Coding
+        planner_checkpoint = SmartCheckpoint(
+            gate_type=HITLGateType.SPEC_APPROVAL,
+            pillar=2,
+            agent=AgentRole.PLANNER,
+            prompt="Review the architecture plan before proceeding to code generation",
+            options=[HITLDecision.APPROVE, HITLDecision.REJECT, HITLDecision.MODIFY],
+            context_summary=planner_response.content[:500] + "..." if len(planner_response.content) > 500 else planner_response.content,
+        )
+        
+        # CRITICAL: Register checkpoint BEFORE emitting to frontend
+        # This ensures the checkpoint is in _pending when the user responds
+        hitl_handler.register_checkpoint(str(planner_checkpoint.id), planner_checkpoint)
+        
+        await sio.emit('hitl_checkpoint', {
+            'id': str(planner_checkpoint.id),
+            'gate_type': planner_checkpoint.gate_type.value,
+            'pillar': 2,
+            'agent': 'PLANNER',
+            'prompt': '📋 **Architecture Plan Ready**\n\nReview the proposed architecture, database schema, and project structure before I start generating code.',
+            'options': ['approve', 'reject', 'modify'],
+            'context_summary': 'The PLANNER has designed the technical architecture for your project.',
+            'agent_persona': AGENT_PERSONAS.get('PLANNER'),
+            'allows_follow_up': True,
+            'next_step_options': [
+                {
+                    'id': 'approve',
+                    'label': '✅ Approve & Generate Code',
+                    'description': 'Proceed to code generation with this architecture',
+                    'action': 'approve',
+                    'color': '#10b981',
+                },
+                {
+                    'id': 'modify',
+                    'label': '✏️ Request Changes',
+                    'description': 'Ask for modifications to the plan',
+                    'action': 'modify',
+                    'color': '#f59e0b',
+                },
+            ],
+            'timestamp': datetime.utcnow().isoformat(),
+        }, to=sid)
+        
+        # Wait for user decision - this BLOCKS until user responds
+        planner_decision = await hitl_handler.present_checkpoint(planner_checkpoint)
+        
+        if planner_decision == HITLDecision.REJECT:
+            await stream_agent_log(sid, 'SYSTEM', '❌ Architecture plan rejected. Pipeline stopped.', 'error')
+            return
+        
+        await stream_agent_log(sid, 'SYSTEM', '✅ Architecture approved. Proceeding to code generation...', 'action')
+        
         # Step 2: Coding
         await sio.emit('pipeline_update', {
             'current_stage': 'coding',
             'active_agent': 'CODER',
-            'progress_percent': 35,
+            'progress_percent': 30,
             'stage_description': 'Generating project files...',
         }, to=sid)
         await stream_typing_indicator(sid, 'CODER', True)
@@ -887,15 +951,69 @@ async def run_pillar2_workflow(
             logger.error(f"Failed to save project files: {fs_err}")
             await stream_agent_log(sid, 'SYSTEM', f'❌ Error saving files: {str(fs_err)}', 'error')
         
+        # HITL Checkpoint: Review Code before Testing
+        code_output = coder_response.metadata.get("code_output", {})
+        files_created = list(code_output.get("files", {}).keys())
+        
+        coder_checkpoint = SmartCheckpoint(
+            gate_type=HITLGateType.REVIEWER_FLAG,
+            pillar=2,
+            agent=AgentRole.CODER,
+            prompt="Review the generated code before running tests",
+            options=[HITLDecision.APPROVE, HITLDecision.REJECT, HITLDecision.MODIFY],
+            context_summary=f'Created {len(files_created)} files including: {", ".join(files_created[:5])}{"..." if len(files_created) > 5 else ""}',
+        )
+        
+        # CRITICAL: Register checkpoint BEFORE emitting to frontend
+        hitl_handler.register_checkpoint(str(coder_checkpoint.id), coder_checkpoint)
+        
+        await sio.emit('hitl_checkpoint', {
+            'id': str(coder_checkpoint.id),
+            'gate_type': coder_checkpoint.gate_type.value,
+            'pillar': 2,
+            'agent': 'CODER',
+            'prompt': f'💻 **Code Generation Complete**\n\nGenerated {len(files_created)} files. Review the code in the Files tab before proceeding to testing.',
+            'options': ['approve', 'reject', 'modify'],
+            'context_summary': f'Created {len(files_created)} files including: {", ".join(files_created[:5])}{"..." if len(files_created) > 5 else ""}',
+            'agent_persona': AGENT_PERSONAS.get('CODER'),
+            'allows_follow_up': True,
+            'next_step_options': [
+                {
+                    'id': 'approve',
+                    'label': '✅ Approve & Run Tests',
+                    'description': 'Proceed to automated testing',
+                    'action': 'approve',
+                    'color': '#10b981',
+                },
+                {
+                    'id': 'modify',
+                    'label': '✏️ Request Changes',
+                    'description': 'Ask for code modifications',
+                    'action': 'modify',
+                    'color': '#f59e0b',
+                },
+            ],
+            'timestamp': datetime.utcnow().isoformat(),
+        }, to=sid)
+        
+        # Wait for user decision - this BLOCKS until user responds
+        coder_decision = await hitl_handler.present_checkpoint(coder_checkpoint)
+        
+        if coder_decision == HITLDecision.REJECT:
+            await stream_agent_log(sid, 'SYSTEM', '❌ Code rejected. Pipeline stopped.', 'error')
+            return
+        
+        await stream_agent_log(sid, 'SYSTEM', '✅ Code approved. Proceeding to testing...', 'action')
+        
         # Step 3: Testing
         await sio.emit('pipeline_update', {
             'current_stage': 'testing',
             'active_agent': 'TESTER',
-            'progress_percent': 70,
+            'progress_percent': 65,
             'stage_description': 'Validating implementation with tests',
         }, to=sid)
         await stream_typing_indicator(sid, 'TESTER', True)
-        await stream_agent_log(sid, 'TESTER', 'Running automated test suites...', 'thought')
+        await stream_agent_log(sid, 'TESTER', '🧪 Running automated test suites...', 'thought')
         
         tester_response = await orch_agent.tester.execute(context)
         await stream_typing_indicator(sid, 'TESTER', False)
@@ -1002,9 +1120,11 @@ async def run_pillar3_workflow(
             
             await emit_smart_checkpoint(sid, checkpoint, orchestrator)
             
+            # Wait for user decision - this BLOCKS until user responds
             decision = await hitl_handler.present_checkpoint(checkpoint)
             
-            user_response = hitl_handler._pending.get(str(checkpoint.id), {}).get('input', '')
+            # Get user input from handler (stored before cleanup)
+            user_response = hitl_handler.get_last_user_input()
             orchestrator.add_conversation_turn("user", user_response or f"Decision: {decision.value}")
             
             await sio.emit('pipeline_update', {

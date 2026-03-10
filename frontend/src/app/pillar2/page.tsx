@@ -173,9 +173,19 @@ export default function Pillar2Page() {
     inputRef.current?.focus();
   }, [activePillar, currentStage, resetPipeline]);
 
-  // State for preview
-  const [showPreview, setShowPreview] = useState(true);
+  // State for preview - hidden by default until coding starts
   const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [previewManuallyHidden, setPreviewManuallyHidden] = useState(false);
+  
+  // Compute whether to show preview based on coding activity
+  const isCodingActive = activeAgent?.toUpperCase() === 'CODER';
+  const hasFiles = generatedFiles.length > 0;
+  const showPreview = !previewManuallyHidden && (isCodingActive || hasFiles);
+  
+  // Toggle function for manual control
+  const togglePreview = () => {
+    setPreviewManuallyHidden(!showPreview);
+  };
 
   const handleStart = () => {
     if (featureInput.trim()) {
@@ -373,37 +383,39 @@ export default function Pillar2Page() {
 
         {/* Main Area - Conversation + Preview */}
         <div className="flex-1 flex flex-col min-w-0">
-          {/* Toggle Preview Button */}
-          <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-900/50">
-            <div className="flex items-center gap-2">
-              <Monitor className="w-4 h-4 text-cyan-400" />
-              <span className="text-xs font-medium text-slate-400">Live Preview</span>
-              {generatedFiles.length > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400">
-                  {generatedFiles.length} files
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowPreview(!showPreview)}
-                className={cn(
-                  "px-2 py-1 text-xs rounded transition-colors",
-                  showPreview ? "bg-cyan-500/20 text-cyan-400" : "bg-slate-800 text-slate-400"
+          {/* Toggle Preview Button - Only show when preview is visible or files are generated */}
+          {(showPreview || generatedFiles.length > 0) && (
+            <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-900/50">
+              <div className="flex items-center gap-2">
+                <Monitor className="w-4 h-4 text-cyan-400" />
+                <span className="text-xs font-medium text-slate-400">Live Preview</span>
+                {generatedFiles.length > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400">
+                    {generatedFiles.length} files
+                  </span>
                 )}
-              >
-                {showPreview ? 'Hide Preview' : 'Show Preview'}
-              </button>
-              {showPreview && (
+              </div>
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setPreviewExpanded(!previewExpanded)}
-                  className="p-1 rounded bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                  onClick={togglePreview}
+                  className={cn(
+                    "px-2 py-1 text-xs rounded transition-colors",
+                    showPreview ? "bg-cyan-500/20 text-cyan-400" : "bg-slate-800 text-slate-400"
+                  )}
                 >
-                  {previewExpanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+                  {showPreview ? 'Hide Preview' : 'Show Preview'}
                 </button>
-              )}
+                {showPreview && (
+                  <button
+                    onClick={() => setPreviewExpanded(!previewExpanded)}
+                    className="p-1 rounded bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                  >
+                    {previewExpanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Split View: Conversation + Preview */}
           <div className={cn(
@@ -431,10 +443,26 @@ export default function Pillar2Page() {
                   files={generatedFiles}
                   projectType="react"
                   syncToLocal={hasWorkspaceAccess}
+                  autoFix={true}
                   onTerminalOutput={(output) => console.log('[Preview]', output)}
                   onError={(error) => console.error('[Preview Error]', error)}
                   onReady={(url) => console.log('[Preview Ready]', url)}
                   onFileSynced={(path) => console.log('[File Synced]', path)}
+                  onBuildError={(error) => console.log('[Build Error]', error)}
+                  onRequestFix={(error) => {
+                    // Send fix request to CODER agent
+                    const fixMessage = `[AUTO-FIX REQUEST] Build error detected:
+Type: ${error.type}
+File: ${error.file || 'unknown'}
+${error.line ? `Line: ${error.line}` : ''}
+Error: ${error.message}
+
+Full error output:
+${error.fullError}
+
+Please fix this error in the affected file.`;
+                    sendUserMessage(fixMessage);
+                  }}
                   className="h-full"
                 />
               </div>

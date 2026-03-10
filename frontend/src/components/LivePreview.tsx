@@ -6,7 +6,7 @@ import { fileSystemService } from '@/services/FileSystemService';
 import CodeEditor from './CodeEditor';
 
 /**
- * LivePreview Component - Bolt.new Style
+ * LivePreview Component 
  *
  * Uses WebContainers to run Node.js in the browser for live preview
  * of generated code. This is the key differentiator that makes Helix
@@ -28,6 +28,15 @@ interface GeneratedFile {
   status?: 'pending' | 'writing' | 'written' | 'error';
 }
 
+interface BuildError {
+  type: 'import' | 'syntax' | 'runtime' | 'unknown';
+  message: string;
+  file?: string;
+  line?: number;
+  column?: number;
+  fullError: string;
+}
+
 interface LivePreviewProps {
   files: GeneratedFile[];
   projectType?: 'react' | 'nextjs' | 'vue' | 'vanilla' | 'node';
@@ -35,7 +44,10 @@ interface LivePreviewProps {
   onError?: (error: string) => void;
   onReady?: (url: string) => void;
   onFileSynced?: (path: string) => void;
+  onBuildError?: (error: BuildError) => void;
+  onRequestFix?: (error: BuildError) => void;
   syncToLocal?: boolean;
+  autoFix?: boolean;
   className?: string;
 }
 
@@ -193,10 +205,13 @@ export default function LivePreview({
   onError,
   onReady,
   onFileSynced,
+  onBuildError,
+  onRequestFix,
   syncToLocal = true,
+  autoFix = false,
   className = '',
 }: LivePreviewProps) {
-  const [status, setStatus] = useState<'idle' | 'streaming' | 'booting' | 'installing' | 'running' | 'ready' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'streaming' | 'booting' | 'installing' | 'running' | 'ready' | 'error' | 'fixing'>('idle');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'preview' | 'terminal' | 'files'>('files'); // Default to files tab to show streaming
@@ -204,21 +219,199 @@ export default function LivePreview({
   const [syncStatus, setSyncStatus] = useState<Record<string, 'pending' | 'syncing' | 'synced' | 'error'>>({});
   const [isFilesComplete, setIsFilesComplete] = useState(false);
   const [hasStartedInstall, setHasStartedInstall] = useState(false);
+  const [installProgress, setInstallProgress] = useState<{ current: number; total: number; package: string } | null>(null);
+  const [installedPackages, setInstalledPackages] = useState<string[]>([]);
+  const [currentBuildError, setCurrentBuildError] = useState<BuildError | null>(null);
+  const [fixAttempts, setFixAttempts] = useState(0);
+  const MAX_FIX_ATTEMPTS = 3;
   
   const webcontainerRef = useRef<WebContainer | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const terminalRef = useRef<HTMLDivElement>(null);
+  const errorBufferRef = useRef<string[]>([]);
 
-  // Add terminal output
+  // Parse npm install output to extract package info
+  const parseNpmOutput = useCallback((output: string) => {
+    // Match patterns like "added 150 packages" or "npm WARN" or package names
+    const addedMatch = output.match(/added (\d+) packages?/i);
+    if (addedMatch) {
+      return { type: 'complete', count: parseInt(addedMatch[1]) };
+    }
+    
+    // Match "npm http fetch" or downloading patterns
+    const fetchMatch = output.match(/npm http fetch (GET|POST) \d+ ([\w@/.-]+)/);
+    if (fetchMatch) {
+      return { type: 'fetching', package: fetchMatch[2] };
+    }
+    
+    // Match "reify:" patterns (npm 7+)
+    const reifyMatch = output.match(/reify:([^:]+):/);
+    if (reifyMatch) {
+      return { type: 'installing', package: reifyMatch[1].trim() };
+    }
+    
+    // Match progress like "⸨░░░░░░░░░░░░░░░░░░⸩ ⠋ reify"
+    const progressMatch = output.match(/(\d+)\/(\d+)/);
+    if (progressMatch) {
+      return { type: 'progress', current: parseInt(progressMatch[1]), total: parseInt(progressMatch[2]) };
+    }
+    
+    return null;
+  }, []);
+
+  // Strip ANSI escape codes from terminal output
+  const stripAnsiCodes = useCallback((str: string): string => {
+    // Remove ANSI escape codes (colors, cursor movement, etc.)
+    // eslint-disable-next-line no-control-regex
+    return str.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+              .replace(/\[\d*[ABCDEFGJKST]/g, '') // Cursor movement
+              .replace(/\[\d*;\d*[Hf]/g, '') // Cursor position
+              .replace(/\[\d*[mK]/g, '') // SGR and erase
+              .replace(/\[[\d;]*m/g, '') // More SGR codes
+              .replace(/\r/g, ''); // Carriage returns
+  }, []);
+
+  // Parse build errors from terminal output
+  const parseBuildError = useCallback((output: string): BuildError | null => {
+    // Vite import resolution error
+    const importMatch = output.match(/Failed to resolve import ["']([^"']+)["'] from ["']([^"']+)["']/);
+    if (importMatch) {
+      return {
+        type: 'import',
+        message: `Cannot find module "${importMatch[1]}"`,
+        file: importMatch[2],
+        fullError: output,
+      };
+    }
+    
+    // Vite/esbuild syntax error with file location
+    const syntaxMatch = output.match(/(?:SyntaxError|ParseError).*?(?:in|at)\s+([^\s:]+):(\d+):(\d+)/);
+    if (syntaxMatch) {
+      return {
+        type: 'syntax',
+        message: output.split('\n')[0],
+        file: syntaxMatch[1],
+        line: parseInt(syntaxMatch[2]),
+        column: parseInt(syntaxMatch[3]),
+        fullError: output,
+      };
+    }
+    
+    // Generic error with file path
+    const fileErrorMatch = output.match(/(?:Error|error).*?([\/\w.-]+\.[jt]sx?):(\d+)(?::(\d+))?/);
+    if (fileErrorMatch) {
+      return {
+        type: 'runtime',
+        message: output.split('\n')[0],
+        file: fileErrorMatch[1],
+        line: parseInt(fileErrorMatch[2]),
+        column: fileErrorMatch[3] ? parseInt(fileErrorMatch[3]) : undefined,
+        fullError: output,
+      };
+    }
+    
+    // ENOENT (file not found) error
+    const enoentMatch = output.match(/ENOENT.*?open\s+['"]?([^'"]+)['"]?/);
+    if (enoentMatch) {
+      return {
+        type: 'import',
+        message: `File not found: ${enoentMatch[1]}`,
+        file: enoentMatch[1],
+        fullError: output,
+      };
+    }
+    
+    // Generic error detection
+    if (output.toLowerCase().includes('error') && !output.includes('0 errors')) {
+      return {
+        type: 'unknown',
+        message: output.split('\n')[0],
+        fullError: output,
+      };
+    }
+    
+    return null;
+  }, []);
+
+  // Add terminal output with parsing and error detection
   const addTerminalOutput = useCallback((output: string) => {
-    setTerminalOutput(prev => [...prev, output]);
-    onTerminalOutput?.(output);
+    // Strip ANSI codes first
+    const strippedOutput = stripAnsiCodes(output);
+    
+    // Parse npm output for progress tracking
+    const parsed = parseNpmOutput(strippedOutput);
+    if (parsed) {
+      if (parsed.type === 'installing' || parsed.type === 'fetching') {
+        setInstalledPackages(prev => {
+          const pkg = parsed.package || '';
+          if (pkg && !prev.includes(pkg)) {
+            return [...prev.slice(-9), pkg]; // Keep last 10 packages
+          }
+          return prev;
+        });
+      }
+      if (parsed.type === 'progress' && parsed.current !== undefined && parsed.total !== undefined) {
+        setInstallProgress({ current: parsed.current, total: parsed.total, package: '' });
+      }
+    }
+    
+    // Filter out noisy npm output, keep important messages
+    const cleanOutput = strippedOutput.trim();
+    if (!cleanOutput) return;
+    
+    // Skip very long lines (usually progress bars)
+    if (cleanOutput.length > 200 && !cleanOutput.includes('error') && !cleanOutput.includes('Error')) {
+      return;
+    }
+    
+    // Skip repetitive progress indicators
+    if (cleanOutput.match(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\s]+$/)) {
+      return;
+    }
+    
+    // Skip lines that are just escape code remnants
+    if (cleanOutput.match(/^\[?\d*[A-Za-z]?$/)) {
+      return;
+    }
+    
+    // Buffer output for error detection
+    errorBufferRef.current.push(cleanOutput);
+    if (errorBufferRef.current.length > 20) {
+      errorBufferRef.current.shift();
+    }
+    
+    // Check for build errors
+    const buildError = parseBuildError(cleanOutput);
+    if (buildError && status !== 'fixing') {
+      setCurrentBuildError(buildError);
+      onBuildError?.(buildError);
+      
+      // Auto-fix if enabled and within attempt limit
+      if (autoFix && fixAttempts < MAX_FIX_ATTEMPTS) {
+        setStatus('fixing');
+        setFixAttempts(prev => prev + 1);
+        onRequestFix?.(buildError);
+      }
+    }
+    
+    setTerminalOutput(prev => [...prev.slice(-100), cleanOutput]); // Keep last 100 lines
+    onTerminalOutput?.(cleanOutput);
     
     // Auto-scroll terminal
     if (terminalRef.current) {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
-  }, [onTerminalOutput]);
+  }, [onTerminalOutput, parseNpmOutput, stripAnsiCodes, parseBuildError, status, autoFix, fixAttempts, onBuildError, onRequestFix]);
+
+  // Manual request fix function (for UI button)
+  const requestManualFix = useCallback(() => {
+    if (currentBuildError && fixAttempts < MAX_FIX_ATTEMPTS) {
+      setStatus('fixing');
+      setFixAttempts(prev => prev + 1);
+      setTerminalOutput(prev => [...prev, `🔧 Requesting fix (attempt ${fixAttempts + 1}/${MAX_FIX_ATTEMPTS})...`]);
+      onRequestFix?.(currentBuildError);
+    }
+  }, [currentBuildError, fixAttempts, onRequestFix]);
 
   // Sync files to local filesystem
   const syncFilesToLocal = useCallback(async (filesToSync: GeneratedFile[]) => {
@@ -446,6 +639,7 @@ export default function LivePreview({
       running: { color: 'bg-purple-500 animate-pulse', text: 'Starting...' },
       ready: { color: 'bg-green-500', text: 'Ready' },
       error: { color: 'bg-red-500', text: 'Error' },
+      fixing: { color: 'bg-orange-500 animate-pulse', text: 'Auto-fixing...' },
     };
     
     const config = statusConfig[status];
@@ -485,13 +679,40 @@ export default function LivePreview({
         </div>
         
         {/* Actions */}
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {/* Status indicator */}
+          {status === 'streaming' && (
+            <span className="text-xs text-cyan-400 flex items-center gap-1">
+              <span className="w-2 h-2 bg-cyan-400 rounded-full animate-pulse" />
+              Receiving files...
+            </span>
+          )}
+          {status === 'installing' && (
+            <span className="text-xs text-blue-400 flex items-center gap-1">
+              <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
+              Installing...
+            </span>
+          )}
+          
           <button
             onClick={bootAndRun}
-            disabled={status === 'booting' || status === 'installing' || status === 'running'}
-            className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={
+              status === 'booting' || 
+              status === 'installing' || 
+              status === 'running' || 
+              status === 'streaming' ||
+              !isFilesComplete
+            }
+            className={`px-3 py-1 text-sm rounded transition-all ${
+              isFilesComplete && (status === 'idle' || status === 'ready' || status === 'error')
+                ? 'bg-green-600 text-white hover:bg-green-700'
+                : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+            }`}
           >
-            {status === 'idle' ? '▶ Run' : '🔄 Restart'}
+            {status === 'idle' || status === 'streaming' ? '▶ Run' : 
+             status === 'installing' ? '📦 Installing...' :
+             status === 'running' ? '🔄 Starting...' :
+             status === 'ready' ? '� Restart' : '▶ Run'}
           </button>
           {previewUrl && (
             <a
@@ -539,19 +760,133 @@ export default function LivePreview({
         
         {/* Terminal Tab */}
         {activeTab === 'terminal' && (
-          <div
-            ref={terminalRef}
-            className="h-full p-4 font-mono text-sm text-green-400 bg-black overflow-auto"
-          >
-            {terminalOutput.length === 0 ? (
-              <p className="text-gray-500">Terminal output will appear here...</p>
-            ) : (
-              terminalOutput.map((line, i) => (
-                <div key={i} className="whitespace-pre-wrap">
-                  {line}
+          <div className="h-full flex flex-col bg-[#1e1e1e]">
+            {/* Install Progress Header */}
+            {status === 'installing' && (
+              <div className="px-4 py-3 border-b border-[#3c3c3c] bg-[#252526]">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-sm text-blue-400 font-medium">Installing dependencies...</span>
+                  </div>
+                  {installProgress && (
+                    <span className="text-xs text-gray-500">
+                      {installProgress.current}/{installProgress.total}
+                    </span>
+                  )}
                 </div>
-              ))
+                {/* Progress bar */}
+                <div className="h-1.5 bg-[#3c3c3c] rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 transition-all duration-300"
+                    style={{ width: installProgress ? `${(installProgress.current / installProgress.total) * 100}%` : '0%' }}
+                  />
+                </div>
+                {/* Recently installed packages */}
+                {installedPackages.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {installedPackages.slice(-5).map((pkg, i) => (
+                      <span 
+                        key={i} 
+                        className="text-[10px] px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded"
+                      >
+                        📦 {pkg}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
+            
+            {/* Build Error Banner with Fix Button */}
+            {currentBuildError && status !== 'fixing' && (
+              <div className="px-4 py-3 border-b border-red-500/30 bg-red-500/10">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-red-400 font-medium text-sm">❌ Build Error</span>
+                      {currentBuildError.file && (
+                        <span className="text-xs text-red-300/70 truncate">
+                          in {currentBuildError.file}
+                          {currentBuildError.line && `:${currentBuildError.line}`}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-red-200/80 truncate">{currentBuildError.message}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {fixAttempts < MAX_FIX_ATTEMPTS ? (
+                      <button
+                        onClick={requestManualFix}
+                        className="px-3 py-1.5 text-xs font-medium bg-orange-500 hover:bg-orange-600 text-white rounded transition-colors flex items-center gap-1"
+                      >
+                        🔧 Auto-Fix
+                        <span className="text-orange-200">({MAX_FIX_ATTEMPTS - fixAttempts} left)</span>
+                      </button>
+                    ) : (
+                      <span className="text-xs text-red-300">Max attempts reached</span>
+                    )}
+                    <button
+                      onClick={() => setCurrentBuildError(null)}
+                      className="p-1 text-red-300 hover:text-red-100 transition-colors"
+                      title="Dismiss"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Fixing Status Banner */}
+            {status === 'fixing' && (
+              <div className="px-4 py-3 border-b border-orange-500/30 bg-orange-500/10">
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-sm text-orange-400 font-medium">
+                    Auto-fixing error (attempt {fixAttempts}/{MAX_FIX_ATTEMPTS})...
+                  </span>
+                </div>
+                <p className="text-xs text-orange-200/70 mt-1">
+                  CODER agent is analyzing and fixing the issue
+                </p>
+              </div>
+            )}
+            
+            {/* Terminal Output */}
+            <div
+              ref={terminalRef}
+              className="flex-1 p-4 font-mono text-sm overflow-auto"
+            >
+              {terminalOutput.length === 0 ? (
+                <p className="text-gray-500">Terminal output will appear here...</p>
+              ) : (
+                terminalOutput.map((line, i) => {
+                  // Color code different types of output
+                  let textColor = 'text-gray-300';
+                  
+                  if (line.startsWith('✅') || line.includes('success') || line.includes('ready')) {
+                    textColor = 'text-green-400';
+                  } else if (line.startsWith('❌') || line.includes('error') || line.includes('Error')) {
+                    textColor = 'text-red-400';
+                  } else if (line.startsWith('⚠️') || line.includes('warn') || line.includes('WARN')) {
+                    textColor = 'text-yellow-400';
+                  } else if (line.startsWith('📦') || line.includes('added') || line.includes('packages')) {
+                    textColor = 'text-blue-400';
+                  } else if (line.startsWith('🚀') || line.startsWith('🔥')) {
+                    textColor = 'text-purple-400';
+                  } else if (line.startsWith('📁') || line.startsWith('💾')) {
+                    textColor = 'text-cyan-400';
+                  }
+                  
+                  return (
+                    <div key={i} className={`whitespace-pre-wrap ${textColor} leading-relaxed`}>
+                      {line}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         )}
         

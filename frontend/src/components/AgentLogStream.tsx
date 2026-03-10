@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from 'react';
-import { useHelixStore, AgentPersona, ConversationMessage } from '@/store/helixStore';
+import { useHelixStore, AgentPersona, ConversationMessage, HitlCheckpoint } from '@/store/helixStore';
 import ReactMarkdown from 'react-markdown';
+import HitlInlineCard from './HitlInlineCard';
 import { 
   Brain, 
   Zap, 
@@ -18,6 +19,154 @@ import {
   FileCode,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+// Collapsible section component for structured content
+function CollapsibleSection({
+  title,
+  icon,
+  children,
+  defaultExpanded = true,
+  color = '#06b6d4',
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+  defaultExpanded?: boolean;
+  color?: string;
+}) {
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  
+  return (
+    <div className="my-3 rounded-xl border border-slate-700/50 overflow-hidden bg-slate-900/50">
+      <div 
+        className="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+        style={{ borderLeft: `3px solid ${color}` }}
+      >
+        {isExpanded ? (
+          <ChevronDown className="w-4 h-4 text-slate-400" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-slate-400" />
+        )}
+        {icon}
+        <span className="text-sm font-semibold text-slate-200">{title}</span>
+      </div>
+      {isExpanded && (
+        <div className="px-4 pb-4 pt-2 border-t border-slate-700/30">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Engineering Specification Display Component
+function EngineeringSpecDisplay({ content }: { content: string }) {
+  // Parse the specification content into sections
+  const sections: { title: string; content: string; icon: string; color: string }[] = [];
+  
+  // Common section patterns in engineering specs
+  const sectionPatterns = [
+    { pattern: /🧱\s*Engineering Specification[^\n]*/i, title: 'Engineering Specification', icon: '🧱', color: '#06b6d4' },
+    { pattern: /🏗️\s*Architecture Overview[^\n]*/i, title: 'Architecture Overview', icon: '🏗️', color: '#8b5cf6' },
+    { pattern: /📊\s*Database Schema[^\n]*/i, title: 'Database Schema', icon: '📊', color: '#10b981' },
+    { pattern: /📁\s*Project Structure[^\n]*/i, title: 'Project Structure', icon: '📁', color: '#f59e0b' },
+    { pattern: /📦\s*Dependencies[^\n]*/i, title: 'Dependencies', icon: '📦', color: '#ef4444' },
+    { pattern: /⚙️\s*Environment Variables[^\n]*/i, title: 'Environment Variables', icon: '⚙️', color: '#6366f1' },
+    { pattern: /📋\s*Implementation Tasks[^\n]*/i, title: 'Implementation Tasks', icon: '📋', color: '#06b6d4' },
+    { pattern: /🔍\s*Potential Issues[^\n]*/i, title: 'Potential Issues & Solutions', icon: '🔍', color: '#f59e0b' },
+    { pattern: /🧪\s*Testing Strategy[^\n]*/i, title: 'Testing Strategy', icon: '🧪', color: '#10b981' },
+  ];
+  
+  // Split content by major sections
+  const foundSections: { title: string; content: string; icon: string; color: string; startIndex: number }[] = [];
+  
+  sectionPatterns.forEach(({ pattern, title, icon, color }) => {
+    const match = content.match(pattern);
+    if (match && match.index !== undefined) {
+      foundSections.push({
+        title,
+        content: '',
+        icon,
+        color,
+        startIndex: match.index,
+      });
+    }
+  });
+  
+  // Sort by start index
+  foundSections.sort((a, b) => a.startIndex - b.startIndex);
+  
+  // Extract content for each section
+  for (let i = 0; i < foundSections.length; i++) {
+    const currentSection = foundSections[i];
+    const nextSection = foundSections[i + 1];
+    const startIdx = currentSection.startIndex;
+    const endIdx = nextSection ? nextSection.startIndex : content.length;
+    
+    // Get section content, removing the header line
+    let sectionContent = content.slice(startIdx, endIdx);
+    const headerMatch = sectionContent.match(/^[^\n]+\n/);
+    if (headerMatch) {
+      sectionContent = sectionContent.slice(headerMatch[0].length);
+    }
+    
+    sections.push({
+      title: currentSection.title,
+      content: sectionContent.trim(),
+      icon: currentSection.icon,
+      color: currentSection.color,
+    });
+  }
+  
+  // If no sections found, return regular markdown
+  if (sections.length === 0) {
+    return (
+      <div className="prose prose-invert prose-sm max-w-none">
+        <ReactMarkdown>{content}</ReactMarkdown>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="space-y-2">
+      {sections.map((section, idx) => (
+        <CollapsibleSection
+          key={idx}
+          title={section.title}
+          icon={<span className="text-base">{section.icon}</span>}
+          color={section.color}
+          defaultExpanded={idx < 3} // First 3 sections expanded by default
+        >
+          <div className="prose prose-invert prose-sm max-w-none prose-headings:text-slate-200 prose-headings:font-semibold prose-headings:text-sm prose-p:text-slate-300 prose-p:text-sm prose-li:text-slate-300 prose-li:text-sm prose-table:text-sm prose-th:text-slate-300 prose-th:bg-slate-800/50 prose-th:px-3 prose-th:py-2 prose-td:text-slate-400 prose-td:px-3 prose-td:py-2 prose-td:border-slate-700 prose-code:text-cyan-300 prose-code:bg-cyan-500/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-pre:bg-slate-800/80 prose-pre:border prose-pre:border-slate-700">
+            <ReactMarkdown>{section.content}</ReactMarkdown>
+          </div>
+        </CollapsibleSection>
+      ))}
+    </div>
+  );
+}
+
+// Check if content looks like an engineering specification
+function isEngineeringSpec(content: string): boolean {
+  const specIndicators = [
+    '🧱 Engineering Specification',
+    '🏗️ Architecture Overview',
+    '📊 Database Schema',
+    '📁 Project Structure',
+    '📦 Dependencies',
+    '📋 Implementation Tasks',
+  ];
+  
+  let matchCount = 0;
+  for (const indicator of specIndicators) {
+    if (content.includes(indicator)) {
+      matchCount++;
+    }
+  }
+  
+  return matchCount >= 2; // At least 2 indicators suggest it's a spec
+}
 
 // Collapsible code block component
 function CollapsibleCodeBlock({ 
@@ -102,7 +251,14 @@ function CollapsibleCodeBlock({
 }
 
 // Parse content for code blocks and render them collapsible
-function RichContent({ content, isResult }: { content: string; isResult: boolean }) {
+function RichContent({ content, isResult, speaker }: { content: string; isResult: boolean; speaker?: string }) {
+  // Check if this is an engineering specification from the planner
+  const isPlannerSpec = (speaker?.toUpperCase() === 'PLANNER' || speaker?.toUpperCase() === 'ORCHESTRATOR') && isEngineeringSpec(content);
+  
+  if (isPlannerSpec) {
+    return <EngineeringSpecDisplay content={content} />;
+  }
+  
   // Check if content has code blocks
   const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
   const hasCodeBlocks = codeBlockRegex.test(content);
@@ -313,7 +469,7 @@ function ConversationItem({ message, persona }: { message: ConversationMessage; 
             : "bg-slate-800/50 border border-slate-700/50 px-4 py-2 text-slate-300"
         )}>
           {isResult ? (
-            <RichContent content={message.content} isResult={true} />
+            <RichContent content={message.content} isResult={true} speaker={message.speaker} />
           ) : (
             <p>{message.content}</p>
           )}
@@ -324,14 +480,14 @@ function ConversationItem({ message, persona }: { message: ConversationMessage; 
 }
 
 export default function AgentLogStream() {
-  const { conversation, agentPersonas, typingAgents, isProcessing } = useHelixStore();
+  const { conversation, agentPersonas, typingAgents, isProcessing, pendingCheckpoints } = useHelixStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   
-  // Auto-scroll to bottom on new messages
+  // Auto-scroll to bottom on new messages or checkpoints
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversation.length, typingAgents.size]);
+  }, [conversation.length, typingAgents.size, pendingCheckpoints.length]);
 
   // Get persona for a speaker
   const getPersona = (speaker: string): AgentPersona | undefined => {
@@ -341,7 +497,7 @@ export default function AgentLogStream() {
   // Convert typing agents Set to array
   const typingAgentsArray = Array.from(typingAgents);
 
-  if (conversation.length === 0 && !isProcessing) {
+  if (conversation.length === 0 && !isProcessing && pendingCheckpoints.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-slate-600 p-8">
         <div className="w-16 h-16 rounded-2xl bg-slate-800/50 border border-slate-700/50 flex items-center justify-center mb-4">
@@ -380,8 +536,17 @@ export default function AgentLogStream() {
         />
       ))}
       
-      {/* Processing indicator when no typing agents */}
-      {isProcessing && typingAgentsArray.length === 0 && conversation.length > 0 && (
+      {/* Inline HITL Checkpoints - shown directly in the conversation flow */}
+      {pendingCheckpoints.map((checkpoint, index) => (
+        <HitlInlineCard 
+          key={checkpoint.id} 
+          checkpoint={checkpoint}
+          isLatest={index === pendingCheckpoints.length - 1}
+        />
+      ))}
+      
+      {/* Processing indicator when no typing agents and no checkpoints */}
+      {isProcessing && typingAgentsArray.length === 0 && pendingCheckpoints.length === 0 && conversation.length > 0 && (
         <div className="flex items-center justify-center gap-2 py-4">
           <Loader2 className="w-4 h-4 text-slate-500 animate-spin" />
           <span className="text-xs text-slate-500">Processing...</span>
