@@ -1,8 +1,10 @@
 """
 NOVA - CMO Agent
 
-Writes the landing page copy, value proposition, tagline, target audience
-breakdown, and go-to-market strategy. Understands positioning and messaging.
+Writes the value proposition, taglines, target audience breakdown,
+and go-to-market strategy. Understands positioning and messaging.
+Grounds creative work in the financial and technical realities from
+ARIA and FELIX.
 """
 
 import logging
@@ -13,349 +15,236 @@ from src.core.models import AgentRole, HITLDecision, HITLGateType, ReasoningEffo
 
 logger = logging.getLogger(__name__)
 
-NOVA_CMO_SYSTEM_PROMPT = """You are NOVA, the Chief Marketing Officer (CMO) agent for Helix.
+NOVA_CMO_SYSTEM_PROMPT = """You are NOVA, the Chief Marketing Officer (CMO) for Helix.
 
-Your role is to craft compelling marketing strategies and messaging for startup ideas.
+## Who You Are
+You've launched products and you know what actually drives growth — it's rarely
+the thing founders think it is. You're excited about ideas, but you're not a
+cheerleader. Your job is to find the sharpest, most honest way to position a
+product so the right people immediately get why they need it.
 
-## Your Responsibilities:
-1. **Value Proposition**: Define the core value proposition that resonates with target customers
-2. **Tagline Creation**: Create memorable, impactful taglines
-3. **Landing Page Copy**: Write conversion-optimized landing page content
-4. **Target Audience Analysis**: Define and segment the target audience
-5. **Positioning Strategy**: Position the product in the competitive landscape
-6. **Go-to-Market Strategy**: Outline the launch and growth strategy
-7. **Brand Voice**: Establish the brand's tone and personality
+## How You Communicate
+- Open with one sentence that names what's genuinely marketable about this idea —
+  or the core positioning challenge if it's a crowded space
+- Write in paragraphs. Marketing thinking is narrative, not bullet points.
+- When you give tagline options, explain the strategic bet behind each one —
+  why would you choose this angle over another?
+- Ground your go-to-market in FELIX's budget reality — a bootstrapped product
+  can't run paid ads at scale; a funded product can
+- Push back gently if the product has a positioning problem (e.g. too broad,
+  unclear who it's for)
 
-## Your Personality:
-- Warm, energetic, and creative
-- You speak with enthusiasm but back it up with strategy
-- You understand both emotional and rational buying triggers
-- You focus on customer-centric messaging
+## What You Must Cover (weave in naturally)
+1. Core value proposition — one crisp sentence that makes the target customer nod
+2. Who this is really for — not "SMBs" but a vivid description of the actual person
+3. Three tagline options, each pursuing a different strategic angle, with reasoning
+4. The single most effective launch channel for this specific product
+5. Go-to-market in three phases: pre-launch, launch week, first 90 days
+6. What "good traction" looks like at 30/60/90 days
 
-## Output Format:
-Structure your analysis with clear sections:
-1. Value Proposition Statement
-2. Tagline Options (3 variations)
-3. Target Audience Profiles
-4. Competitive Positioning
-5. Landing Page Copy (Hero, Features, CTA)
-6. Go-to-Market Strategy
-7. Key Marketing Channels
-8. Launch Timeline Recommendations
-
-Always focus on clarity, emotional resonance, and conversion potential."""
+## What You Never Do
+- Never write generic taglines like "[Product], Simplified" — they could apply to anything
+- Never ignore the competitive landscape — positioning only works relative to alternatives
+- Never recommend channels that don't match the budget or team size
+- Never write landing page copy that's all features and no emotion"""
 
 
 class NovaCMOAgent(BaseAgent):
-    """
-    NOVA - CMO Agent for marketing and positioning.
-    
-    Creates compelling marketing strategies and copy.
-    """
-    
+    """NOVA - CMO Agent for marketing strategy and positioning."""
+
     def __init__(self):
         super().__init__(
             role=AgentRole.NOVA,
             name="NOVA",
-            description="CMO Agent - Marketing strategy and messaging expert",
+            description="CMO Agent - Marketing strategy, positioning, and messaging expert",
             system_prompt=NOVA_CMO_SYSTEM_PROMPT,
-            reasoning_effort=ReasoningEffort.LOW,  # Creative tasks need less deep reasoning
+            reasoning_effort=ReasoningEffort.LOW,
         )
-        
-        # Register NOVA-specific tools
         self._register_nova_tools()
-    
+
     def _register_nova_tools(self) -> None:
-        """Register tools specific to NOVA."""
-        
-        # Audience analysis tool
         self.register_tool(Tool(
             name="analyze_audience",
             description="Analyze and segment target audience for a product",
             parameters={
-                "product_description": {
-                    "type": "string",
-                    "description": "Description of the product",
-                },
-                "industry": {
-                    "type": "string",
-                    "description": "Industry or market segment",
-                },
+                "product_description": {"type": "string"},
+                "industry": {"type": "string"},
             },
             handler=self._analyze_audience,
         ))
-        
-        # Competitor positioning tool
+
         self.register_tool(Tool(
             name="analyze_positioning",
             description="Analyze competitive positioning opportunities",
             parameters={
-                "product": {
-                    "type": "string",
-                    "description": "Product description",
-                },
-                "competitors": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of competitor names or descriptions",
-                },
+                "product": {"type": "string"},
+                "competitors": {"type": "array", "items": {"type": "string"}},
             },
             handler=self._analyze_positioning,
         ))
-        
-        # Copy generator tool
+
         self.register_tool(Tool(
             name="generate_copy_variations",
-            description="Generate multiple variations of marketing copy",
+            description="Generate multiple tagline or headline variations with strategic rationale",
             parameters={
                 "copy_type": {
                     "type": "string",
                     "enum": ["headline", "tagline", "cta", "description"],
-                    "description": "Type of copy to generate",
                 },
-                "key_message": {
-                    "type": "string",
-                    "description": "The key message to convey",
-                },
+                "key_message": {"type": "string"},
                 "tone": {
                     "type": "string",
                     "enum": ["professional", "casual", "bold", "friendly", "urgent"],
-                    "description": "Desired tone of the copy",
                 },
             },
             handler=self._generate_copy_variations,
         ))
-    
+
     async def _analyze_audience(
-        self,
-        product_description: str,
-        industry: str,
+        self, product_description: str, industry: str
     ) -> Dict[str, Any]:
-        """Analyze target audience segments."""
         return {
-            "primary_segments": [
-                {
-                    "name": "Early Adopters",
-                    "description": "Tech-savvy users who embrace new solutions",
-                    "pain_points": ["Inefficiency", "Outdated tools", "Manual processes"],
-                    "buying_triggers": ["Innovation", "Competitive advantage", "Time savings"],
-                },
-                {
-                    "name": "Growth-Stage Companies",
-                    "description": "Companies scaling their operations",
-                    "pain_points": ["Scaling challenges", "Resource constraints", "Process bottlenecks"],
-                    "buying_triggers": ["Scalability", "ROI", "Integration capabilities"],
-                },
-            ],
-            "secondary_segments": [
-                {
-                    "name": "Enterprise Teams",
-                    "description": "Large organizations seeking efficiency",
-                    "pain_points": ["Coordination", "Compliance", "Legacy systems"],
-                    "buying_triggers": ["Security", "Support", "Customization"],
-                },
-            ],
-            "recommended_focus": "Start with Early Adopters, expand to Growth-Stage Companies",
+            "primary_persona": {
+                "description": "The person who feels this problem most acutely",
+                "pain_points": ["Inefficiency slowing down their core work",
+                                "Existing tools built for a different use case",
+                                "Manual processes that don't scale"],
+                "buying_trigger": "When the pain costs more than the solution",
+                "where_they_hang_out": ["Industry Slack groups", "LinkedIn", "niche forums"],
+            },
+            "secondary_persona": {
+                "description": "Adjacent buyer who benefits but isn't the primary champion",
+                "note": "Don't build messaging for this group first — dilutes the core pitch",
+            },
+            "anti_persona": "Who this is NOT for — being clear about this sharpens positioning",
         }
-    
+
     async def _analyze_positioning(
-        self,
-        product: str,
-        competitors: List[str],
+        self, product: str, competitors: List[str]
     ) -> Dict[str, Any]:
-        """Analyze competitive positioning."""
         return {
-            "product": product,
-            "competitors_analyzed": competitors,
-            "positioning_opportunities": [
-                "Differentiate on ease of use",
-                "Focus on specific use case excellence",
-                "Emphasize integration capabilities",
-                "Lead with customer success stories",
+            "positioning_angles": [
+                {
+                    "angle": "Category creation",
+                    "bet": "If no clear competitor, own the category name",
+                    "risk": "Requires educating the market — expensive and slow",
+                },
+                {
+                    "angle": "Direct comparison",
+                    "bet": "Name the leader and say why you're better for a specific use case",
+                    "risk": "Validates the incumbent — only works if differentiation is clear",
+                },
+                {
+                    "angle": "Audience-first positioning",
+                    "bet": "Lead with the identity of the customer, not the product",
+                    "risk": "Can feel narrow — but sharpness wins early traction",
+                },
             ],
-            "positioning_statement": f"Unlike traditional solutions, {product} offers a unique combination of simplicity and power.",
-            "key_differentiators": [
-                "AI-powered automation",
-                "Intuitive user experience",
-                "Rapid time-to-value",
-            ],
+            "recommendation": "Pick one angle and commit. Trying all three dilutes the message.",
         }
-    
+
     async def _generate_copy_variations(
-        self,
-        copy_type: str,
-        key_message: str,
-        tone: str,
+        self, copy_type: str, key_message: str, tone: str
     ) -> Dict[str, Any]:
-        """Generate copy variations."""
-        variations = {
-            "headline": {
-                "professional": [
-                    f"Transform Your Business with {key_message}",
-                    f"The Future of {key_message} is Here",
-                    f"Unlock the Power of {key_message}",
-                ],
-                "casual": [
-                    f"Finally, {key_message} Made Simple",
-                    f"Say Hello to Better {key_message}",
-                    f"{key_message}? We've Got You Covered",
-                ],
-                "bold": [
-                    f"Stop Settling. Start {key_message}.",
-                    f"The Only {key_message} Solution You'll Ever Need",
-                    f"Revolutionize Your {key_message}",
-                ],
-            },
-            "tagline": {
-                "professional": [
-                    f"{key_message}, Simplified",
-                    f"Excellence in {key_message}",
-                    f"Your Partner in {key_message}",
-                ],
-                "casual": [
-                    f"{key_message}, But Better",
-                    f"Making {key_message} Fun Again",
-                    f"The Easy Way to {key_message}",
-                ],
-                "bold": [
-                    f"Redefining {key_message}",
-                    f"The {key_message} Revolution",
-                    f"Beyond {key_message}",
-                ],
-            },
-        }
-        
-        copy_variations = variations.get(copy_type, {}).get(tone, [f"Discover {key_message}"])
-        
+        # Placeholder — in production the LLM generates these dynamically
         return {
+            "note": "Taglines are generated by the model based on full context — "
+                    "this tool structures the request, not the output.",
             "copy_type": copy_type,
             "tone": tone,
-            "variations": copy_variations,
-            "recommendation": copy_variations[0] if copy_variations else None,
+            "key_message": key_message,
         }
-    
+
     async def execute(self, context: AgentContext) -> AgentResponse:
-        """
-        Execute NOVA's marketing analysis.
-        
-        Args:
-            context: Agent execution context with user input
-            
-        Returns:
-            AgentResponse with marketing strategy
-        """
         logger.info(f"NOVA analyzing: {context.user_input[:100]}...")
-        
-        # Get context from other agents if available
-        tech_context = context.metadata.get("aria_analysis", "")
-        financial_context = context.metadata.get("felix_analysis", "")
-        
-        # Build the analysis prompt
-        analysis_prompt = f"""Create a comprehensive marketing strategy for the following startup idea:
 
-## Startup Idea:
-{context.user_input}
+        # ── Pull cross-agent context ──────────────────────────────────────────
+        aria_analysis = context.metadata.get("aria_analysis", "")
+        felix_analysis = context.metadata.get("felix_analysis", "")
+        intake_answers = context.metadata.get("intake_answers", {})
 
-## Technical Context (from CTO):
-{tech_context if tech_context else "No technical analysis available yet."}
+        intake_summary = (
+            "\n".join(f"- {k.replace('_', ' ').title()}: {v}"
+                      for k, v in intake_answers.items())
+            if intake_answers else "No structured intake data."
+        )
 
-## Financial Context (from CFO):
-{financial_context if financial_context else "No financial analysis available yet."}
+        # Extract budget signal from FELIX for channel recommendations
+        budget_signal = ""
+        if felix_analysis:
+            if "bootstrapped" in felix_analysis.lower() or "pre-seed" in felix_analysis.lower():
+                budget_signal = "This is likely bootstrapped or pre-seed — recommend zero/low-cost channels."
+            elif "seed" in felix_analysis.lower() or "series" in felix_analysis.lower():
+                budget_signal = "Seed-stage budget available — can mix paid and organic channels."
 
-## Additional Context:
-{context.metadata.get('additional_context', 'No additional context provided.')}
+        analysis_prompt = f"""You're the CMO for Helix. Build the marketing strategy for this startup:
 
-Please provide a comprehensive marketing strategy following your standard output format.
+IDEA: {context.user_input}
 
-Focus on:
-1. Creating a compelling value proposition
-2. Crafting memorable taglines (provide 3 options)
-3. Writing conversion-optimized landing page copy
-4. Defining target audience segments
-5. Outlining a go-to-market strategy
+FOUNDER CONTEXT:
+{intake_summary}
 
-Be creative but strategic. Every piece of copy should serve a purpose."""
+TECHNICAL CONTEXT FROM ARIA:
+{aria_analysis if aria_analysis else "Not yet available."}
+
+FINANCIAL CONTEXT FROM FELIX:
+{felix_analysis if felix_analysis else "Not yet available."}
+
+BUDGET SIGNAL: {budget_signal if budget_signal else "Unknown — assume lean."}
+
+Your job is to find the sharpest positioning and most practical path to first customers.
+
+Write three taglines — but explain the strategic bet behind each one, not just the words.
+Describe the target customer vividly — a real person, not a demographic category.
+Make the go-to-market concrete: what do they do on day 1, week 1, month 1?
+
+Write in paragraphs. Be specific. Good marketing thinking is narrative, not a checklist."""
 
         try:
-            # Invoke model
             response = await self.invoke_model(
                 prompt=analysis_prompt,
                 context=context,
                 use_tools=True,
             )
-            
-            # Extract the analysis
+
             analysis = response.get("text", "")
             reasoning = response.get("reasoning", "")
-            
-            # Parse marketing elements
-            marketing_elements = self._parse_marketing_elements(analysis)
-            
-            # Create HITL checkpoint for review
-            checkpoint = self.create_hitl_checkpoint(
-                gate_type=HITLGateType.AGENT_DRAFT_REVIEW,
-                prompt=f"NOVA (CMO) has completed the marketing strategy. Please review:\n\n{analysis[:500]}...",
-                options=[HITLDecision.APPROVE, HITLDecision.EDIT, HITLDecision.REJECT],
-                metadata={"full_analysis": analysis, "marketing_elements": marketing_elements},
+
+            # ── Structured extraction ─────────────────────────────────────────
+            marketing_metadata = await self.structured_extract(
+                text=analysis,
+                schema={
+                    "value_proposition": "string — the core one-sentence value prop",
+                    "taglines": "list of exactly 3 tagline strings",
+                    "target_audience": "string — vivid description of primary customer",
+                    "primary_launch_channel": "string — single best channel to start",
+                    "landing_page_copy": "string — hero section copy if present",
+                },
+                context=context,
             )
-            
+
             return self.format_response(
                 content=analysis,
                 reasoning=reasoning,
-                hitl_checkpoint=checkpoint,
+                hitl_checkpoint=None,
                 metadata={
-                    "value_proposition": marketing_elements.get("value_proposition"),
-                    "taglines": marketing_elements.get("taglines", []),
-                    "target_audience": marketing_elements.get("target_audience"),
-                    "landing_page_copy": marketing_elements.get("landing_page_copy"),
+                    "value_proposition": marketing_metadata.get("value_proposition"),
+                    "taglines": marketing_metadata.get("taglines", []),
+                    "target_audience": marketing_metadata.get("target_audience"),
+                    "primary_launch_channel": marketing_metadata.get("primary_launch_channel"),
+                    "landing_page_copy": marketing_metadata.get("landing_page_copy"),
                 },
             )
-            
+
         except Exception as e:
             logger.error(f"NOVA execution error: {e}")
             return self.format_response(
-                content="I encountered an error while creating the marketing strategy.",
+                content="I ran into an error while building the marketing strategy.",
                 success=False,
                 error=str(e),
             )
-    
-    def _parse_marketing_elements(self, analysis: str) -> Dict[str, Any]:
-        """
-        Parse the analysis text to extract marketing elements.
-        """
-        result = {
-            "value_proposition": None,
-            "taglines": [],
-            "target_audience": None,
-            "landing_page_copy": None,
-        }
-        
-        # Simple parsing - extract sections
-        sections = analysis.split("\n\n")
-        
-        for section in sections:
-            section_lower = section.lower()
-            if "value proposition" in section_lower:
-                result["value_proposition"] = section
-            elif "tagline" in section_lower:
-                # Extract taglines
-                lines = section.split("\n")
-                for line in lines:
-                    if line.strip() and not "tagline" in line.lower():
-                        result["taglines"].append(line.strip())
-            elif "target audience" in section_lower:
-                result["target_audience"] = section
-            elif "landing page" in section_lower or "hero" in section_lower:
-                result["landing_page_copy"] = section
-        
-        return result
-    
+
     def get_voice_config(self) -> Dict[str, Any]:
-        """
-        Get Nova 2 Sonic voice configuration for NOVA.
-        
-        NOVA has a warm, energetic female voice.
-        """
         return {
             "voice_id": "nova_cmo",
             "style": "energetic",

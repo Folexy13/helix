@@ -94,15 +94,75 @@ export interface ConversationMessage {
   speaker: 'user' | string;
   content: string;
   timestamp: number;
-  type: 'message' | 'checkpoint' | 'handoff' | 'result';
+  type: 'message' | 'checkpoint' | 'handoff' | 'result' | 'pillar_transition';
   metadata?: Record<string, unknown>;
+  pillar?: number; // Track which pillar this message belongs to
 }
+
+// Pillar 1 context (startup brief) to pass to Pillar 2
+export interface Pillar1Context {
+  idea: string;
+  brief_summary: string;
+  feasibility_score?: number;
+  technical_analysis?: string;
+  financial_analysis?: string;
+  marketing_analysis?: string;
+  investor_feedback?: string;
+  timestamp: number;
+}
+
+// Cross-pillar context for intelligent transitions
+export interface CrossPillarContext {
+  sourcePillar: number;
+  targetPillar: number;
+  summary: string;
+  keyInsights: string[];
+  userIntent: string;
+  timestamp: number;
+}
+
+// Pillar-specific conversation histories
+export interface PillarConversations {
+  pillar1: ConversationMessage[];
+  pillar2: ConversationMessage[];
+  pillar3: ConversationMessage[];
+}
+
+// Helper function to get pillar name
+export const getPillarName = (pillar: number): string => {
+  switch (pillar) {
+    case 1: return 'Founding Team';
+    case 2: return 'Engineering Workforce';
+    case 3: return 'Knowledge Base';
+    default: return `Pillar ${pillar}`;
+  }
+};
 
 interface HelixState {
   // Session State
   sessionId: string | null;
   activePillar: number | null;
   setSession: (id: string, pillar: number) => void;
+  setActivePillar: (pillar: number) => void;
+
+  // Pillar 1 Context (for passing to Pillar 2)
+  pillar1Context: Pillar1Context | null;
+  setPillar1Context: (context: Pillar1Context | null) => void;
+  pendingPillar2Start: boolean;
+  setPendingPillar2Start: (pending: boolean) => void;
+
+  // Cross-pillar context for intelligent transitions
+  crossPillarContext: CrossPillarContext | null;
+  setCrossPillarContext: (context: CrossPillarContext | null) => void;
+  
+  // Pillar-specific conversations (separate chat histories)
+  pillarConversations: PillarConversations;
+  addPillarMessage: (pillar: number, message: Omit<ConversationMessage, 'id' | 'timestamp' | 'pillar'>) => void;
+  getPillarConversation: (pillar: number) => ConversationMessage[];
+  clearPillarConversation: (pillar: number) => void;
+  
+  // Intelligent pillar transition
+  transitionToPillar: (targetPillar: number, context?: { summary?: string; userIntent?: string }) => void;
 
   // Workspace State
   workspace: WorkspaceConfig | null;
@@ -130,8 +190,9 @@ interface HelixState {
   setPipelineUpdate: (stage: string, agent: string | null, progress: number, description?: string) => void;
   setIsProcessing: (processing: boolean) => void;
   resetPipeline: () => void;
+  resetPillarPipeline: (pillar: number) => void;
 
-  // HITL State
+  // HITL State (deprecated - keeping for backward compatibility)
   pendingCheckpoints: HitlCheckpoint[];
   addCheckpoint: (checkpoint: HitlCheckpoint) => void;
   removeCheckpoint: (id: string) => void;
@@ -139,10 +200,10 @@ interface HelixState {
 
   // Agent Logs (legacy support)
   agentLogs: AgentLog[];
-  addAgentLog: (log: Omit<AgentLog, 'timestamp'>) => void;
+  addAgentLog: (log: Omit<AgentLog, 'timestamp'>, pillar?: number) => void;
   clearAgentLogs: () => void;
 
-  // Conversation (new conversational UI)
+  // Conversation (unified view - combines all pillar conversations)
   conversation: ConversationMessage[];
   addConversationMessage: (message: Omit<ConversationMessage, 'id' | 'timestamp'>) => void;
   clearConversation: () => void;
@@ -167,6 +228,103 @@ export const useHelixStore = create<HelixState>((set, get) => ({
   sessionId: null,
   activePillar: null,
   setSession: (id, pillar) => set({ sessionId: id, activePillar: pillar }),
+  setActivePillar: (pillar) => set({ activePillar: pillar }),
+
+  // Pillar 1 Context
+  pillar1Context: null,
+  setPillar1Context: (context) => set({ pillar1Context: context }),
+  pendingPillar2Start: false,
+  setPendingPillar2Start: (pending) => set({ pendingPillar2Start: pending }),
+
+  // Cross-pillar context
+  crossPillarContext: null,
+  setCrossPillarContext: (context) => set({ crossPillarContext: context }),
+
+  // Pillar-specific conversations (separate chat histories for each pillar)
+  pillarConversations: {
+    pillar1: [],
+    pillar2: [],
+    pillar3: [],
+  },
+  
+  addPillarMessage: (pillar, message) => set((state) => {
+    const pillarKey = `pillar${pillar}` as keyof PillarConversations;
+    const newMessage: ConversationMessage = {
+      ...message,
+      id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: Date.now(),
+      pillar,
+    };
+    
+    return {
+      pillarConversations: {
+        ...state.pillarConversations,
+        [pillarKey]: [...state.pillarConversations[pillarKey], newMessage],
+      },
+      // Also add to unified conversation view
+      conversation: [...state.conversation, newMessage],
+    };
+  }),
+  
+  getPillarConversation: (pillar) => {
+    const state = get();
+    const pillarKey = `pillar${pillar}` as keyof PillarConversations;
+    return state.pillarConversations[pillarKey] || [];
+  },
+  
+  clearPillarConversation: (pillar) => set((state) => {
+    const pillarKey = `pillar${pillar}` as keyof PillarConversations;
+    return {
+      pillarConversations: {
+        ...state.pillarConversations,
+        [pillarKey]: [],
+      },
+    };
+  }),
+  
+  // Intelligent pillar transition with context passing
+  transitionToPillar: (targetPillar, context) => set((state) => {
+    const sourcePillar = state.activePillar || 1;
+    const sourceKey = `pillar${sourcePillar}` as keyof PillarConversations;
+    const sourceConversation = state.pillarConversations[sourceKey];
+    
+    // Generate summary from source conversation
+    const recentMessages = sourceConversation.slice(-10);
+    const keyInsights = recentMessages
+      .filter(m => m.type === 'result' || (m.metadata as Record<string, unknown>)?.logType === 'result')
+      .map(m => m.content.substring(0, 200))
+      .slice(-3);
+    
+    const crossPillarContext: CrossPillarContext = {
+      sourcePillar,
+      targetPillar,
+      summary: context?.summary || `Transitioning from Pillar ${sourcePillar} to Pillar ${targetPillar}`,
+      keyInsights,
+      userIntent: context?.userIntent || 'Continue workflow',
+      timestamp: Date.now(),
+    };
+    
+    // Add transition message to target pillar
+    const targetKey = `pillar${targetPillar}` as keyof PillarConversations;
+    const transitionMessage: ConversationMessage = {
+      id: `transition-${Date.now()}`,
+      speaker: 'system',
+      content: `📋 **Context from ${getPillarName(sourcePillar)}:**\n\n${crossPillarContext.summary}\n\n${keyInsights.length > 0 ? '**Key Insights:**\n' + keyInsights.map(i => `• ${i}`).join('\n') : ''}`,
+      timestamp: Date.now(),
+      type: 'pillar_transition',
+      pillar: targetPillar,
+      metadata: { crossPillarContext },
+    };
+    
+    return {
+      activePillar: targetPillar,
+      crossPillarContext,
+      pillarConversations: {
+        ...state.pillarConversations,
+        [targetKey]: [transitionMessage, ...state.pillarConversations[targetKey]],
+      },
+    };
+  }),
 
   // Workspace
   workspace: null,
@@ -222,6 +380,27 @@ export const useHelixStore = create<HelixState>((set, get) => ({
     typingAgents: new Set(),
     generatedFiles: [],
   }),
+  
+  // Reset pipeline for a specific pillar only
+  resetPillarPipeline: (pillar) => set((state) => {
+    const pillarKey = `pillar${pillar}` as keyof PillarConversations;
+    return {
+      currentStage: 'idle',
+      stageDescription: '',
+      activeAgent: null,
+      pipelineProgress: 0,
+      isProcessing: false,
+      pendingCheckpoints: [],
+      typingAgents: new Set(),
+      // Only clear the specific pillar's conversation
+      pillarConversations: {
+        ...state.pillarConversations,
+        [pillarKey]: [],
+      },
+      // Clear generated files only for pillar 2
+      generatedFiles: pillar === 2 ? [] : state.generatedFiles,
+    };
+  }),
 
   // HITL Checkpoints
   pendingCheckpoints: [],
@@ -241,35 +420,57 @@ export const useHelixStore = create<HelixState>((set, get) => ({
 
   // Agent Logs
   agentLogs: [],
-  addAgentLog: (log) => set((state) => {
+  addAgentLog: (log, pillar) => set((state) => {
     const newLog = { ...log, timestamp: Date.now() };
+    const activePillar = pillar || state.activePillar || 1;
+    const pillarKey = `pillar${activePillar}` as keyof PillarConversations;
     
-    // Also add to conversation for unified view
+    // Create conversation message
     const conversationMessage: ConversationMessage = {
       id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       speaker: log.agent.toLowerCase(),
       content: log.message,
       timestamp: Date.now(),
       type: log.type === 'result' ? 'result' : 'message',
+      pillar: activePillar,
       metadata: { logType: log.type, persona: log.persona },
     };
     
     return { 
       agentLogs: [...state.agentLogs, newLog],
+      // Add to unified conversation
       conversation: [...state.conversation, conversationMessage],
+      // Add to pillar-specific conversation
+      pillarConversations: {
+        ...state.pillarConversations,
+        [pillarKey]: [...state.pillarConversations[pillarKey], conversationMessage],
+      },
     };
   }),
   clearAgentLogs: () => set({ agentLogs: [] }),
 
   // Conversation
   conversation: [],
-  addConversationMessage: (message) => set((state) => ({
-    conversation: [...state.conversation, {
+  addConversationMessage: (message) => set((state) => {
+    const activePillar = message.pillar || state.activePillar || 1;
+    const pillarKey = `pillar${activePillar}` as keyof PillarConversations;
+    
+    const newMessage: ConversationMessage = {
       ...message,
       id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       timestamp: Date.now(),
-    }],
-  })),
+      pillar: activePillar,
+    };
+    
+    return {
+      conversation: [...state.conversation, newMessage],
+      // Also add to pillar-specific conversation
+      pillarConversations: {
+        ...state.pillarConversations,
+        [pillarKey]: [...state.pillarConversations[pillarKey], newMessage],
+      },
+    };
+  }),
   clearConversation: () => set({ conversation: [] }),
 
   // Handoffs

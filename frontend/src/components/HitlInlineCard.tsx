@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
-import { useHelixStore, HitlCheckpoint, AgentPersona, NextStepOption } from '@/store/helixStore';
+import { useHelixStore, HitlCheckpoint, AgentPersona, NextStepOption, Pillar1Context } from '@/store/helixStore';
 import { useRouter } from 'next/navigation';
 import { useHelixSocket } from '@/hooks/useHelixSocket';
 import ReactMarkdown from 'react-markdown';
@@ -54,7 +54,7 @@ interface HitlInlineCardProps {
 }
 
 export default function HitlInlineCard({ checkpoint, isLatest = false }: HitlInlineCardProps) {
-  const { agentPersonas } = useHelixStore();
+  const { agentPersonas, setPillar1Context, setPendingPillar2Start, conversation } = useHelixStore();
   const { sendHitlDecision, sendUserMessage } = useHelixSocket();
   const router = useRouter();
   
@@ -105,6 +105,20 @@ export default function HitlInlineCard({ checkpoint, isLatest = false }: HitlInl
     setIsSubmitting(false);
   };
 
+  // Helper to extract brief summary from conversation
+  const extractBriefSummary = (conv: typeof conversation): string => {
+    // Look for the most recent substantial message from agents
+    const agentMessages = conv
+      .filter(m => m.speaker !== 'user' && m.content.length > 100)
+      .slice(-5);
+    
+    if (agentMessages.length > 0) {
+      return agentMessages.map(m => m.content).join('\n\n');
+    }
+    
+    return checkpoint.prompt || '';
+  };
+
   const handleNextStepAction = (option: NextStepOption) => {
     setIsSubmitting(true);
     sendHitlDecision(checkpoint.id, option.id, `Selected: ${option.label}`, {});
@@ -113,6 +127,18 @@ export default function HitlInlineCard({ checkpoint, isLatest = false }: HitlInl
     // Handle navigation
     switch (option.action) {
       case 'navigate_pillar2':
+        // Extract context from the checkpoint and conversation to pass to Pillar 2
+        const now = new Date().getTime();
+        const pillar1Context: Pillar1Context = {
+          idea: checkpoint.context_summary || '',
+          brief_summary: extractBriefSummary(conversation),
+          timestamp: now,
+        };
+        
+        // Store the context and flag that we should auto-start Pillar 2
+        setPillar1Context(pillar1Context);
+        setPendingPillar2Start(true);
+        
         router.push('/pillar2');
         break;
       case 'restart_pillar1':

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { WebContainer, FileSystemTree } from '@webcontainer/api';
 import { fileSystemService } from '@/services/FileSystemService';
 import CodeEditor from './CodeEditor';
@@ -64,19 +64,33 @@ const PROJECT_TEMPLATES: Record<string, FileSystemTree> = {
             dev: 'vite',
             build: 'vite build',
             preview: 'vite preview',
+            test: 'vitest',
+            'test:ui': 'vitest --ui',
           },
           dependencies: {
-            react: '^18.2.0',
-            'react-dom': '^18.2.0',
+            'react': '18.2.0',
+            'react-dom': '18.2.0',
+            'react-router-dom': '6.20.0',
+            'zustand': '4.4.0',
           },
           devDependencies: {
-            '@vitejs/plugin-react': '^4.0.0',
-            vite: '^5.0.0',
+            '@vitejs/plugin-react': '4.2.0',
+            '@types/react': '18.2.0',
+            '@types/react-dom': '18.2.0',
+            '@testing-library/react': '14.1.0',
+            '@testing-library/jest-dom': '6.1.0',
+            'jsdom': '23.0.0',
+            'vitest': '1.1.0',
+            'typescript': '5.3.0',
+            'vite': '5.0.0',
+            'tailwindcss': '3.4.0',
+            'autoprefixer': '10.4.0',
+            'postcss': '8.4.0',
           },
         }, null, 2),
       },
     },
-    'vite.config.js': {
+    'vite.config.ts': {
       file: {
         contents: `
 import { defineConfig } from 'vite';
@@ -87,6 +101,14 @@ export default defineConfig({
   server: {
     host: true,
     port: 3000,
+  },
+  resolve: {
+    extensions: ['.tsx', '.ts', '.jsx', '.js'],
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
   },
 });
         `.trim(),
@@ -104,27 +126,190 @@ export default defineConfig({
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
         `.trim(),
       },
     },
+    'tsconfig.json': {
+      file: {
+        contents: JSON.stringify({
+          compilerOptions: {
+            target: 'ES2020',
+            useDefineForClassFields: true,
+            lib: ['ES2020', 'DOM', 'DOM.Iterable'],
+            module: 'ESNext',
+            skipLibCheck: true,
+            moduleResolution: 'bundler',
+            allowImportingTsExtensions: true,
+            resolveJsonModule: true,
+            isolatedModules: true,
+            noEmit: true,
+            jsx: 'react-jsx',
+            strict: true,
+            noUnusedLocals: false,
+            noUnusedParameters: false,
+            noFallthroughCasesInSwitch: true,
+          },
+          include: ['src'],
+          references: [{ path: './tsconfig.node.json' }],
+        }, null, 2),
+      },
+    },
+    'tsconfig.node.json': {
+      file: {
+        contents: JSON.stringify({
+          compilerOptions: {
+            composite: true,
+            skipLibCheck: true,
+            module: 'ESNext',
+            moduleResolution: 'bundler',
+            allowSyntheticDefaultImports: true,
+          },
+          include: ['vite.config.ts'],
+        }, null, 2),
+      },
+    },
+    'tailwind.config.js': {
+      file: {
+        contents: `
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+        `.trim(),
+      },
+    },
+    'postcss.config.js': {
+      file: {
+        contents: `
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+        `.trim(),
+      },
+    },
     src: {
       directory: {
-        'main.jsx': {
+        'main.tsx': {
           file: {
             contents: `
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import './index.css';
 
-ReactDOM.createRoot(document.getElementById('root')).render(
+ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>
 );
             `.trim(),
+          },
+        },
+        'App.tsx': {
+          file: {
+            contents: `
+import React from 'react';
+
+/**
+ * Default App Component
+ * This will be replaced by the generated App.tsx from CODER agent.
+ */
+export default function App() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 flex items-center justify-center">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-cyan-500 mx-auto mb-4"></div>
+        <h1 className="text-2xl font-bold text-white mb-2">Helix Preview</h1>
+        <p className="text-gray-400">Generating your application...</p>
+      </div>
+    </div>
+  );
+}
+            `.trim(),
+          },
+        },
+        'index.css': {
+          file: {
+            contents: `
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+            `.trim(),
+          },
+        },
+        // Pre-create common directories to ensure they exist
+        components: {
+          directory: {
+            '.gitkeep': {
+              file: { contents: '' },
+            },
+          },
+        },
+        pages: {
+          directory: {
+            '.gitkeep': {
+              file: { contents: '' },
+            },
+          },
+        },
+        store: {
+          directory: {
+            '.gitkeep': {
+              file: { contents: '' },
+            },
+          },
+        },
+        hooks: {
+          directory: {
+            '.gitkeep': {
+              file: { contents: '' },
+            },
+          },
+        },
+        services: {
+          directory: {
+            '.gitkeep': {
+              file: { contents: '' },
+            },
+          },
+        },
+        utils: {
+          directory: {
+            'delay.ts': {
+              file: {
+                contents: `
+/**
+ * Utility function to simulate network delay
+ * Used by mock API services for realistic UX
+ */
+export const delay = (ms: number = 300): Promise<void> => 
+  new Promise(resolve => setTimeout(resolve, ms));
+
+export default delay;
+                `.trim(),
+              },
+            },
+          },
+        },
+        test: {
+          directory: {
+            'setup.ts': {
+              file: {
+                contents: `
+import '@testing-library/jest-dom';
+                `.trim(),
+              },
+            },
           },
         },
       },
@@ -448,12 +633,48 @@ export default function LivePreview({
     }
   }, [syncToLocal, addTerminalOutput, onFileSynced]);
 
+  // Normalize file path to ensure consistency
+  const normalizeFilePath = useCallback((path: string): string => {
+    // Remove leading ./ or /
+    let normalized = path.replace(/^\.?\//, '');
+    
+    // Handle common path variations
+    // If path doesn't start with src/ but should (for tsx/jsx files in root)
+    if (!normalized.startsWith('src/') && 
+        !normalized.includes('/') && 
+        (normalized.endsWith('.tsx') || normalized.endsWith('.jsx')) &&
+        normalized !== 'App.tsx' && normalized !== 'App.jsx' &&
+        normalized !== 'main.tsx' && normalized !== 'main.jsx') {
+      // Component files should be in src/components/
+      normalized = `src/components/${normalized}`;
+    }
+    
+    // Ensure App.tsx is in src/
+    if (normalized === 'App.tsx' || normalized === 'App.jsx') {
+      normalized = `src/${normalized}`;
+    }
+    
+    // Ensure main.tsx is in src/
+    if (normalized === 'main.tsx' || normalized === 'main.jsx') {
+      normalized = `src/${normalized}`;
+    }
+    
+    // Ensure index.css is in src/
+    if (normalized === 'index.css' || normalized === 'styles.css') {
+      normalized = `src/${normalized}`;
+    }
+    
+    return normalized;
+  }, []);
+
   // Convert generated files to WebContainer file tree
   const filesToFileTree = useCallback((generatedFiles: GeneratedFile[]): FileSystemTree => {
     const tree: FileSystemTree = {};
     
     for (const file of generatedFiles) {
-      const parts = file.path.split('/').filter(Boolean);
+      // Normalize the file path first
+      const normalizedPath = normalizeFilePath(file.path);
+      const parts = normalizedPath.split('/').filter(Boolean);
       let current = tree as Record<string, { directory?: FileSystemTree; file?: { contents: string } }>;
       
       for (let i = 0; i < parts.length - 1; i++) {
@@ -473,20 +694,29 @@ export default function LivePreview({
     }
     
     return tree;
-  }, []);
+  }, [normalizeFilePath]);
 
   // Merge template with generated files
   const mergeFileTrees = useCallback((template: FileSystemTree, generated: FileSystemTree): FileSystemTree => {
-    const merged = { ...template } as Record<string, unknown>;
+    const merged = JSON.parse(JSON.stringify(template)) as Record<string, unknown>;
     
     const deepMerge = (target: Record<string, unknown>, source: Record<string, unknown>) => {
       for (const key of Object.keys(source)) {
-        const sourceVal = source[key] as { directory?: Record<string, unknown> };
-        const targetVal = target[key] as { directory?: Record<string, unknown> } | undefined;
-        if (sourceVal?.directory && targetVal?.directory) {
-          deepMerge(targetVal.directory, sourceVal.directory);
-        } else {
-          target[key] = source[key];
+        const sourceVal = source[key] as { directory?: Record<string, unknown>; file?: { contents: string } };
+        const targetVal = target[key] as { directory?: Record<string, unknown>; file?: { contents: string } } | undefined;
+        
+        if (sourceVal?.directory) {
+          // Source is a directory
+          if (targetVal?.directory) {
+            // Both are directories, merge recursively
+            deepMerge(targetVal.directory, sourceVal.directory);
+          } else {
+            // Target doesn't have this directory or has a file, replace with directory
+            target[key] = JSON.parse(JSON.stringify(sourceVal));
+          }
+        } else if (sourceVal?.file) {
+          // Source is a file, always replace
+          target[key] = { file: { contents: sourceVal.file.contents } };
         }
       }
     };
@@ -517,14 +747,49 @@ export default function LivePreview({
       const fileTree = mergeFileTrees(template, generatedTree);
       
       addTerminalOutput('📁 Mounting file system...');
+      
+      // Log the files being mounted for debugging
+      const logFileTree = (tree: FileSystemTree, prefix = '') => {
+        for (const [name, entry] of Object.entries(tree)) {
+          if ('file' in entry) {
+            addTerminalOutput(`   📄 ${prefix}${name}`);
+          } else if ('directory' in entry) {
+            addTerminalOutput(`   📁 ${prefix}${name}/`);
+            logFileTree(entry.directory as FileSystemTree, `${prefix}${name}/`);
+          }
+        }
+      };
+      logFileTree(fileTree);
+      
       await webcontainer.mount(fileTree);
       addTerminalOutput('✅ Files mounted');
       
-      // Install dependencies
+      // Install dependencies - try pnpm first for faster installation
       setStatus('installing');
       addTerminalOutput('📦 Installing dependencies...');
       
-      const installProcess = await webcontainer.spawn('npm', ['install']);
+      // Check if pnpm is available
+      let packageManager = 'npm';
+      let installArgs = ['install'];
+      let devCommand = 'npm';
+      let devArgs = ['run', 'dev'];
+      
+      try {
+        const pnpmCheck = await webcontainer.spawn('pnpm', ['--version']);
+        const pnpmExitCode = await pnpmCheck.exit;
+        if (pnpmExitCode === 0) {
+          packageManager = 'pnpm';
+          installArgs = ['install', '--prefer-offline', '--no-frozen-lockfile'];
+          devCommand = 'npx';
+          devArgs = ['vite'];
+          addTerminalOutput('⚡ Using pnpm for faster installation');
+        }
+      } catch {
+        // pnpm not available, use npm
+        addTerminalOutput('📦 Using npm for installation');
+      }
+      
+      const installProcess = await webcontainer.spawn(packageManager, installArgs);
       
       installProcess.output.pipeTo(new WritableStream({
         write(data) {
@@ -535,16 +800,16 @@ export default function LivePreview({
       const installExitCode = await installProcess.exit;
       
       if (installExitCode !== 0) {
-        throw new Error(`npm install failed with exit code ${installExitCode}`);
+        throw new Error(`${packageManager} install failed with exit code ${installExitCode}`);
       }
       
       addTerminalOutput('✅ Dependencies installed');
       
       // Start dev server
       setStatus('running');
-      addTerminalOutput('🔥 Starting development server...');
+      addTerminalOutput(`🔥 Starting development server with ${devCommand} ${devArgs.join(' ')}...`);
       
-      const devProcess = await webcontainer.spawn('npm', ['run', 'dev']);
+      const devProcess = await webcontainer.spawn(devCommand, devArgs);
       
       devProcess.output.pipeTo(new WritableStream({
         write(data) {
@@ -576,7 +841,21 @@ export default function LivePreview({
       addTerminalOutput('🔄 Updating files...');
       
       for (const file of files) {
-        await webcontainerRef.current.fs.writeFile(file.path, file.content);
+        // Normalize the path to match how files were mounted
+        const normalizedPath = normalizeFilePath(file.path);
+        
+        // Ensure parent directories exist
+        const parts = normalizedPath.split('/');
+        if (parts.length > 1) {
+          const dirPath = parts.slice(0, -1).join('/');
+          try {
+            await webcontainerRef.current.fs.mkdir(dirPath, { recursive: true });
+          } catch {
+            // Directory might already exist, ignore
+          }
+        }
+        
+        await webcontainerRef.current.fs.writeFile(normalizedPath, file.content);
       }
       
       addTerminalOutput('✅ Files updated (hot reload should trigger)');
@@ -584,7 +863,7 @@ export default function LivePreview({
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       addTerminalOutput(`❌ Update error: ${errorMessage}`);
     }
-  }, [files, status, addTerminalOutput]);
+  }, [files, status, addTerminalOutput, normalizeFilePath]);
 
   // Check if all files are complete (have 'written' status)
   useEffect(() => {
@@ -743,15 +1022,24 @@ export default function LivePreview({
       <div className="flex-1 min-h-[400px]">
         {/* Preview Tab */}
         {activeTab === 'preview' && (
-          <div className="h-full">
+          <div className="h-full relative">
             {previewUrl ? (
-              <iframe
-                ref={iframeRef}
-                src={previewUrl}
-                className="w-full h-full border-0"
-                title="Live Preview"
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-              />
+              <>
+                <iframe
+                  ref={iframeRef}
+                  src={previewUrl}
+                  className="w-full h-full border-0"
+                  title="Live Preview"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock"
+                  allow="cross-origin-isolated"
+                  onLoad={() => console.log('[Preview] iframe loaded:', previewUrl)}
+                  onError={(e) => console.error('[Preview] iframe error:', e)}
+                />
+                {/* Fallback message if iframe appears blank */}
+                <div className="absolute bottom-4 right-4 bg-gray-800/80 text-white text-xs px-3 py-2 rounded-lg opacity-70 hover:opacity-100 transition-opacity">
+                  <p>Preview URL: <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline">Open in new tab</a></p>
+                </div>
+              </>
             ) : (
               <div className="h-full flex items-center justify-center text-gray-500">
                 {status === 'idle' ? (

@@ -25,37 +25,67 @@ function CollapsibleSection({
   title,
   icon,
   children,
+  preview,
   defaultExpanded = true,
   color = '#06b6d4',
 }: {
   title: string;
   icon?: React.ReactNode;
   children: React.ReactNode;
+  preview?: string;
   defaultExpanded?: boolean;
   color?: string;
 }) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   
   return (
-    <div className="my-3 rounded-xl border border-slate-700/50 overflow-hidden bg-slate-900/50">
+    <div className="my-6 rounded-2xl border border-slate-700/50 overflow-hidden bg-slate-900/40 backdrop-blur-xl shadow-xl transition-all duration-300 hover:border-slate-600 hover:shadow-2xl">
       <div 
-        className="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
+        className="flex items-center gap-4 px-6 py-5 cursor-pointer hover:bg-slate-800/60 transition-colors group relative overflow-hidden"
         onClick={() => setIsExpanded(!isExpanded)}
-        style={{ borderLeft: `3px solid ${color}` }}
       >
-        {isExpanded ? (
-          <ChevronDown className="w-4 h-4 text-slate-400" />
-        ) : (
-          <ChevronRight className="w-4 h-4 text-slate-400" />
-        )}
-        {icon}
-        <span className="text-sm font-semibold text-slate-200">{title}</span>
+        {/* Colorful accent bar */}
+        <div 
+          className="absolute left-0 top-0 bottom-0 w-1.5 transition-all duration-300 group-hover:w-2" 
+          style={{ backgroundColor: color }}
+        />
+        
+        {/* Glow effect behind icon */}
+        <div className="relative flex items-center justify-center w-10 h-10 rounded-xl bg-slate-800/80 border border-slate-700/50 shadow-inner z-10">
+          <div 
+            className="absolute inset-0 opacity-20 blur-md rounded-xl transition-opacity group-hover:opacity-40"
+            style={{ backgroundColor: color }}
+          />
+          {icon}
+        </div>
+        
+        <div className="flex-1 min-w-0">
+          <span className="text-base font-bold text-slate-100 tracking-wide">{title}</span>
+          {!isExpanded && preview && (
+            <p className="text-sm text-slate-400 truncate mt-1 opacity-80 group-hover:opacity-100 transition-opacity">
+              {preview}
+            </p>
+          )}
+        </div>
+        
+        <div className={`p-2 rounded-full transition-all duration-300 ${isExpanded ? 'bg-slate-800 text-slate-300' : 'text-slate-500 group-hover:bg-slate-800 group-hover:text-slate-300'}`}>
+          {isExpanded ? (
+            <ChevronDown className="w-5 h-5" />
+          ) : (
+            <ChevronRight className="w-5 h-5" />
+          )}
+        </div>
       </div>
-      {isExpanded && (
-        <div className="px-4 pb-4 pt-2 border-t border-slate-700/30">
+      
+      <div 
+        className={`transition-all duration-500 ease-in-out origin-top ${
+          isExpanded ? 'max-h-[8000px] opacity-100' : 'max-h-0 opacity-0'
+        }`}
+      >
+        <div className="px-8 pb-8 pt-4 border-t border-slate-700/40 bg-slate-900/20">
           {children}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -68,11 +98,13 @@ function EngineeringSpecDisplay({ content }: { content: string }) {
   // Common section patterns in engineering specs
   const sectionPatterns = [
     { pattern: /🧱\s*Engineering Specification[^\n]*/i, title: 'Engineering Specification', icon: '🧱', color: '#06b6d4' },
-    { pattern: /🏗️\s*Architecture Overview[^\n]*/i, title: 'Architecture Overview', icon: '🏗️', color: '#8b5cf6' },
-    { pattern: /📊\s*Database Schema[^\n]*/i, title: 'Database Schema', icon: '📊', color: '#10b981' },
+    { pattern: /🏗️\s*(?:Frontend\s+)?Architecture Overview[^\n]*/i, title: 'Architecture Overview', icon: '🏗️', color: '#8b5cf6' },
+    { pattern: /📊\s*(?:Data Models|Database Schema)[^\n]*/i, title: 'Data Models', icon: '📊', color: '#10b981' },
     { pattern: /📁\s*Project Structure[^\n]*/i, title: 'Project Structure', icon: '📁', color: '#f59e0b' },
     { pattern: /📦\s*Dependencies[^\n]*/i, title: 'Dependencies', icon: '📦', color: '#ef4444' },
     { pattern: /⚙️\s*Environment Variables[^\n]*/i, title: 'Environment Variables', icon: '⚙️', color: '#6366f1' },
+    { pattern: /🔌\s*Mock Data[^\n]*/i, title: 'Mock Data & API Patterns', icon: '🔌', color: '#22c55e' },
+    { pattern: /🎨\s*UI\/UX Design[^\n]*/i, title: 'UI/UX Design', icon: '🎨', color: '#ec4899' },
     { pattern: /📋\s*Implementation Tasks[^\n]*/i, title: 'Implementation Tasks', icon: '📋', color: '#06b6d4' },
     { pattern: /🔍\s*Potential Issues[^\n]*/i, title: 'Potential Issues & Solutions', icon: '🔍', color: '#f59e0b' },
     { pattern: /🧪\s*Testing Strategy[^\n]*/i, title: 'Testing Strategy', icon: '🧪', color: '#10b981' },
@@ -128,17 +160,47 @@ function EngineeringSpecDisplay({ content }: { content: string }) {
     );
   }
   
+  // Helper to extract preview text from section content
+  const getPreview = (content: string): string => {
+    // Remove markdown formatting and get first meaningful line
+    const lines = content
+      .replace(/[#*`]/g, '')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0 && !l.startsWith('|') && !l.startsWith('-'));
+    
+    if (lines.length > 0) {
+      const preview = lines[0].slice(0, 50);
+      return preview.length < lines[0].length ? preview + '...' : preview;
+    }
+    return '';
+  };
+
   return (
-    <div className="space-y-2">
+    <div className="space-y-4">
       {sections.map((section, idx) => (
         <CollapsibleSection
           key={idx}
           title={section.title}
-          icon={<span className="text-base">{section.icon}</span>}
+          icon={<span className="text-xl">{section.icon}</span>}
           color={section.color}
-          defaultExpanded={idx < 3} // First 3 sections expanded by default
+          preview={getPreview(section.content)}
+          defaultExpanded={idx < 2} // First 2 sections expanded by default
         >
-          <div className="prose prose-invert prose-sm max-w-none prose-headings:text-slate-200 prose-headings:font-semibold prose-headings:text-sm prose-p:text-slate-300 prose-p:text-sm prose-li:text-slate-300 prose-li:text-sm prose-table:text-sm prose-th:text-slate-300 prose-th:bg-slate-800/50 prose-th:px-3 prose-th:py-2 prose-td:text-slate-400 prose-td:px-3 prose-td:py-2 prose-td:border-slate-700 prose-code:text-cyan-300 prose-code:bg-cyan-500/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-pre:bg-slate-800/80 prose-pre:border prose-pre:border-slate-700">
+          <div className="prose prose-invert prose-base max-w-none 
+            prose-headings:text-slate-100 prose-headings:font-bold prose-headings:text-lg prose-headings:border-b prose-headings:border-slate-800 prose-headings:pb-3 prose-headings:mb-4
+            prose-p:text-slate-300 prose-p:text-base prose-p:leading-relaxed prose-p:mb-5
+            prose-li:text-slate-300 prose-li:text-base prose-li:marker:text-slate-500
+            prose-ul:space-y-2 prose-ol:space-y-2
+            prose-strong:text-slate-200 prose-strong:font-semibold
+            prose-table:text-base prose-table:border-collapse prose-table:w-full prose-table:rounded-xl prose-table:overflow-hidden
+            prose-th:text-slate-200 prose-th:bg-slate-800/80 prose-th:px-5 prose-th:py-3 prose-th:text-left prose-th:font-semibold
+            prose-td:text-slate-300 prose-td:px-5 prose-td:py-3 prose-td:border-b prose-td:border-slate-800/50
+            prose-code:text-cyan-300 prose-code:bg-cyan-900/20 prose-code:px-2 prose-code:py-1 prose-code:rounded-md prose-code:font-mono prose-code:font-medium prose-code:before:content-none prose-code:after:content-none
+            prose-pre:bg-[#0d1117] prose-pre:border prose-pre:border-slate-800/80 prose-pre:shadow-2xl prose-pre:rounded-2xl prose-pre:p-5
+            prose-a:text-cyan-400 prose-a:no-underline hover:prose-a:underline
+            [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+          >
             <ReactMarkdown>{section.content}</ReactMarkdown>
           </div>
         </CollapsibleSection>
@@ -417,20 +479,20 @@ function ConversationItem({ message, persona }: { message: ConversationMessage; 
   // User messages
   if (isUser) {
     return (
-      <div className="flex items-start gap-3 justify-end animate-in fade-in slide-in-from-right-2 duration-300">
-        <div className="max-w-[85%]">
-          <div className="flex items-center gap-2 mb-1 justify-end">
-            <span className="text-[10px] text-slate-600">
+      <div className="flex items-start gap-4 justify-end animate-in fade-in slide-in-from-right-2 duration-500 mb-6">
+        <div className="max-w-[85%] lg:max-w-[75%]">
+          <div className="flex items-center gap-2 mb-1.5 justify-end">
+            <span className="text-xs text-slate-500 font-medium">
               {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
-            <span className="text-xs font-bold text-blue-400">You</span>
+            <span className="text-sm font-bold text-blue-400">You</span>
           </div>
-          <div className="px-4 py-3 rounded-2xl rounded-br-md bg-blue-600 text-white text-sm leading-relaxed">
+          <div className="px-5 py-4 rounded-3xl rounded-tr-sm bg-gradient-to-br from-blue-600 to-blue-700 text-white text-base leading-relaxed shadow-lg shadow-blue-900/20">
             {message.content}
           </div>
         </div>
-        <div className="w-8 h-8 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center shrink-0">
-          <User className="w-4 h-4 text-blue-400" />
+        <div className="w-10 h-10 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center shrink-0 mt-6 shadow-inner">
+          <User className="w-5 h-5 text-blue-400" />
         </div>
       </div>
     );
@@ -438,35 +500,37 @@ function ConversationItem({ message, persona }: { message: ConversationMessage; 
   
   // Agent/System messages
   return (
-    <div className="flex items-start gap-3 animate-in fade-in slide-in-from-left-2 duration-300">
-      <AgentAvatar persona={persona} size="sm" />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-xs font-bold" style={{ color: persona?.color || '#94a3b8' }}>
+    <div className="flex items-start gap-4 animate-in fade-in slide-in-from-left-2 duration-500 mb-6">
+      <div className="mt-6">
+        <AgentAvatar persona={persona} size="md" />
+      </div>
+      <div className="flex-1 min-w-0 max-w-[95%] lg:max-w-[85%]">
+        <div className="flex items-center gap-3 mb-1.5">
+          <span className="text-sm font-bold tracking-wide" style={{ color: persona?.color || '#94a3b8' }}>
             {persona?.name || message.speaker.toUpperCase()}
           </span>
           {!isSystem && (
-            <span className="text-[10px] text-slate-600">{persona?.title}</span>
+            <span className="text-xs text-slate-500 font-medium">{persona?.title}</span>
           )}
-          <div className="flex items-center gap-1 ml-auto">
+          <div className="flex items-center gap-2 ml-auto">
             <MessageTypeIcon type={logType} />
-            <span className="text-[10px] text-slate-600">
+            <span className="text-xs text-slate-500 font-medium">
               {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
         </div>
         
         <div className={cn(
-          "rounded-2xl rounded-tl-md text-sm leading-relaxed",
+          "rounded-3xl rounded-tl-sm text-base leading-relaxed shadow-lg",
           isResult 
-            ? "bg-slate-900/80 border border-slate-700 p-4" 
+            ? "bg-[#0b101a] border border-slate-700/80 p-6" 
             : logType === 'thought'
-            ? "bg-purple-500/10 border border-purple-500/20 px-4 py-2 text-purple-200"
+            ? "bg-purple-500/10 border border-purple-500/20 px-5 py-4 text-purple-100"
             : logType === 'action'
-            ? "bg-yellow-500/10 border border-yellow-500/20 px-4 py-2 text-yellow-200"
+            ? "bg-yellow-500/10 border border-yellow-500/20 px-5 py-4 text-yellow-100"
             : logType === 'error'
-            ? "bg-rose-500/10 border border-rose-500/20 px-4 py-2 text-rose-200"
-            : "bg-slate-800/50 border border-slate-700/50 px-4 py-2 text-slate-300"
+            ? "bg-rose-500/10 border border-rose-500/20 px-5 py-4 text-rose-100"
+            : "bg-slate-800/40 border border-slate-700/50 px-5 py-4 text-slate-200"
         )}>
           {isResult ? (
             <RichContent content={message.content} isResult={true} speaker={message.speaker} />
@@ -481,17 +545,35 @@ function ConversationItem({ message, persona }: { message: ConversationMessage; 
 
 interface AgentLogStreamProps {
   agentFilter?: string | null;
+  pillar?: number; // Optional pillar to show pillar-specific conversation
 }
 
-export default function AgentLogStream({ agentFilter }: AgentLogStreamProps) {
-  const { conversation, agentPersonas, typingAgents, isProcessing, pendingCheckpoints } = useHelixStore();
+export default function AgentLogStream({ agentFilter, pillar }: AgentLogStreamProps) {
+  const { 
+    conversation, 
+    pillarConversations,
+    activePillar,
+    agentPersonas, 
+    typingAgents, 
+    isProcessing, 
+    pendingCheckpoints 
+  } = useHelixStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  
+  // Determine which conversation to show
+  const currentPillar = pillar || activePillar || 1;
+  const pillarKey = `pillar${currentPillar}` as keyof typeof pillarConversations;
+  
+  // Use pillar-specific conversation if pillar is specified, otherwise use unified
+  const baseConversation = pillar 
+    ? pillarConversations[pillarKey] || []
+    : conversation;
   
   // Auto-scroll to bottom on new messages or checkpoints
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversation.length, typingAgents.size, pendingCheckpoints.length]);
+  }, [baseConversation.length, typingAgents.size, pendingCheckpoints.length]);
 
   // Get persona for a speaker
   const getPersona = (speaker: string): AgentPersona | undefined => {
@@ -503,14 +585,14 @@ export default function AgentLogStream({ agentFilter }: AgentLogStreamProps) {
   
   // Filter conversation by agent if filter is set
   const filteredConversation = agentFilter 
-    ? conversation.filter(msg => 
+    ? baseConversation.filter(msg => 
         msg.speaker.toUpperCase() === agentFilter.toUpperCase() || 
         msg.speaker === 'user' || 
         msg.speaker === 'system'
       )
-    : conversation;
+    : baseConversation;
 
-  if (conversation.length === 0 && !isProcessing && pendingCheckpoints.length === 0) {
+  if (baseConversation.length === 0 && !isProcessing && pendingCheckpoints.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-slate-600 p-8">
         <div className="w-16 h-16 rounded-2xl bg-slate-800/50 border border-slate-700/50 flex items-center justify-center mb-4">
@@ -572,7 +654,7 @@ export default function AgentLogStream({ agentFilter }: AgentLogStreamProps) {
       ))}
       
       {/* Processing indicator when no typing agents and no checkpoints */}
-      {isProcessing && typingAgentsArray.length === 0 && pendingCheckpoints.length === 0 && conversation.length > 0 && (
+      {isProcessing && typingAgentsArray.length === 0 && pendingCheckpoints.length === 0 && baseConversation.length > 0 && (
         <div className="flex items-center justify-center gap-2 py-4">
           <Loader2 className="w-4 h-4 text-slate-500 animate-spin" />
           <span className="text-xs text-slate-500">Processing...</span>

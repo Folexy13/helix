@@ -4,8 +4,6 @@ ARIA - CTO Agent
 Evaluates technical feasibility, recommends tech stack, architecture approach,
 infrastructure needs, and third-party integrations. Flags technical risks
 and estimates development complexity.
-
-Uses Nova 2 Lite with extended thinking set to `medium` for deeper analysis.
 """
 
 import logging
@@ -17,46 +15,41 @@ from src.core.models import AgentRole, HITLDecision, HITLGateType, ReasoningEffo
 
 logger = logging.getLogger(__name__)
 
-ARIA_SYSTEM_PROMPT = """You are ARIA, the Chief Technology Officer (CTO) agent for Helix.
+ARIA_SYSTEM_PROMPT = """You are ARIA, the Chief Technology Officer (CTO) for Helix.
 
-Your role is to evaluate the technical feasibility of startup ideas and provide comprehensive technical guidance.
+## Who You Are
+You're the kind of CTO who has actually shipped products — not just architected them.
+You've made the wrong tech call before and learned from it. You give real opinions,
+not safe answers. When something is a bad idea technically, you say so clearly.
+When something is exciting to build, that shows too.
 
-## Your Responsibilities:
-1. **Technical Feasibility Assessment**: Evaluate if the idea can be built with current technology
-2. **Tech Stack Recommendation**: Suggest the most appropriate technologies, frameworks, and tools
-3. **Architecture Design**: Propose a high-level system architecture
-4. **Infrastructure Planning**: Recommend cloud services, hosting, and scaling strategies
-5. **Third-Party Integrations**: Identify necessary APIs, services, and integrations
-6. **Risk Assessment**: Flag potential technical challenges and risks
-7. **Complexity Estimation**: Estimate development effort and timeline
+## How You Communicate
+- Open with one sentence that reacts to what's interesting (or concerning) about
+  this specific idea — never a generic intro
+- Write in paragraphs, like a smart colleague talking. Not bullet lists.
+- Be specific. Don't say "use a modern stack" — say why you'd pick FastAPI over
+  Django for this use case, or why React Native beats Flutter here
+- Flag risks early, frame them as solvable unless they genuinely aren't
+- One technical opinion per paragraph — don't cram everything into walls of text
 
-## Your Personality:
-- Calm, precise, and technical
-- You speak with confidence but acknowledge uncertainties
-- You prioritize practical, scalable solutions over cutting-edge but risky technologies
-- You consider both short-term MVP needs and long-term scalability
+## What You Must Cover (weave in naturally, don't use these as headers)
+1. What's technically interesting or tricky about this idea
+2. Your recommended stack with reasoning for each choice
+3. High-level architecture (how does data flow? what are the core services?)
+4. The single biggest technical risk and how to mitigate it
+5. Rough complexity: MVP timeline and what "done" looks like for v1
+6. Feasibility score 1-10 — state it clearly with one sentence of reasoning
 
-## Output Format:
-Structure your analysis with clear sections:
-1. Technical Feasibility Score (1-10)
-2. Recommended Tech Stack
-3. Architecture Overview
-4. Infrastructure Requirements
-5. Key Integrations Needed
-6. Technical Risks & Mitigations
-7. Development Complexity (Low/Medium/High)
-8. Estimated Timeline
-
-Always be specific and actionable in your recommendations."""
+## What You Never Do
+- Never say "Certainly!" or "Great question!" or "As an AI..."
+- Never hedge everything — pick a stack and defend it
+- Never list technologies without explaining why you chose them over alternatives
+- Never ignore the context from other agents when it's provided"""
 
 
 class AriaAgent(BaseAgent):
-    """
-    ARIA - CTO Agent for technical feasibility analysis.
-    
-    Uses extended thinking (medium) for deep technical analysis.
-    """
-    
+    """ARIA - CTO Agent for technical feasibility analysis."""
+
     def __init__(self):
         super().__init__(
             role=AgentRole.ARIA,
@@ -65,14 +58,9 @@ class AriaAgent(BaseAgent):
             system_prompt=ARIA_SYSTEM_PROMPT,
             reasoning_effort=ReasoningEffort.MEDIUM,
         )
-        
-        # Register ARIA-specific tools
         self._register_aria_tools()
-    
+
     def _register_aria_tools(self) -> None:
-        """Register tools specific to ARIA."""
-        
-        # Tool for analyzing tech stack compatibility
         self.register_tool(Tool(
             name="analyze_tech_stack",
             description="Analyze compatibility and trade-offs of a proposed tech stack",
@@ -89,8 +77,7 @@ class AriaAgent(BaseAgent):
             },
             handler=self._analyze_tech_stack,
         ))
-        
-        # Tool for estimating infrastructure costs
+
         self.register_tool(Tool(
             name="estimate_infrastructure",
             description="Estimate infrastructure requirements and costs",
@@ -108,178 +95,122 @@ class AriaAgent(BaseAgent):
             },
             handler=self._estimate_infrastructure,
         ))
-    
+
     async def _analyze_tech_stack(
-        self,
-        technologies: List[str],
-        use_case: str,
+        self, technologies: List[str], use_case: str
     ) -> Dict[str, Any]:
-        """Analyze tech stack compatibility."""
-        # This would integrate with external APIs or databases
-        # For now, return a structured analysis
         return {
             "technologies": technologies,
             "use_case": use_case,
             "compatibility_score": 8,
             "recommendations": [
-                "Consider using TypeScript for better type safety",
-                "PostgreSQL is a solid choice for relational data",
+                "Consider TypeScript for better type safety and long-term maintainability",
+                "PostgreSQL is the right default for relational data — avoid premature NoSQL",
             ],
-            "concerns": [
-                "Ensure team has experience with chosen stack",
-            ],
+            "concerns": ["Validate team familiarity with chosen stack before committing"],
         }
-    
+
     async def _estimate_infrastructure(
-        self,
-        scale: str,
-        features: List[str],
+        self, scale: str, features: List[str]
     ) -> Dict[str, Any]:
-        """Estimate infrastructure requirements."""
-        # Scale-based estimates
-        scale_multipliers = {
-            "small": 1,
-            "medium": 3,
-            "large": 10,
-            "enterprise": 50,
-        }
-        
-        base_cost = 100  # Base monthly cost in USD
-        multiplier = scale_multipliers.get(scale, 1)
-        
+        scale_costs = {"small": 100, "medium": 300, "large": 1000, "enterprise": 5000}
+        monthly_cost = scale_costs.get(scale, 100)
+
         return {
             "scale": scale,
-            "features": features,
-            "estimated_monthly_cost": base_cost * multiplier,
+            "estimated_monthly_cost_usd": monthly_cost,
             "recommended_services": [
-                "AWS EC2 or ECS for compute",
-                "RDS for database",
-                "S3 for storage",
-                "CloudFront for CDN",
+                "AWS ECS or Railway for compute (simpler than raw EC2 for early stage)",
+                "RDS PostgreSQL for database",
+                "S3 + CloudFront for assets",
+                "Upstash Redis for caching/queues",
             ],
-            "scaling_strategy": "Horizontal auto-scaling with load balancer",
+            "scaling_strategy": "Start on managed services, containerize early for portability",
         }
-    
+
     async def execute(self, context: AgentContext) -> AgentResponse:
-        """
-        Execute ARIA's technical analysis.
-        
-        Args:
-            context: Agent execution context with user input
-            
-        Returns:
-            AgentResponse with technical analysis
-        """
         logger.info(f"ARIA analyzing: {context.user_input[:100]}...")
-        
-        # Build the analysis prompt
-        analysis_prompt = f"""Analyze the following startup idea from a technical perspective:
 
-## Startup Idea:
-{context.user_input}
+        # ── Pull cross-agent context if available ─────────────────────────────
+        intake_answers = context.metadata.get("intake_answers", {})
+        intake_summary = (
+            "\n".join(f"- {k.replace('_', ' ').title()}: {v}"
+                      for k, v in intake_answers.items())
+            if intake_answers else "No structured intake data."
+        )
 
-## Additional Context:
-{context.metadata.get('additional_context', 'No additional context provided.')}
+        analysis_prompt = f"""You're the CTO for Helix. Analyze this startup idea:
 
-Please provide a comprehensive technical analysis following your standard output format.
-Consider:
-- What technologies would be best suited for this?
-- What are the main technical challenges?
-- How complex would this be to build?
-- What infrastructure would be needed?
-- What third-party services would be required?
+IDEA: {context.user_input}
 
-Be specific and actionable in your recommendations."""
+WHAT WE KNOW FROM THE FOUNDER:
+{intake_summary}
+
+ADDITIONAL CONTEXT: {context.metadata.get('additional_context', 'None.')}
+
+Give a thorough technical analysis. Be specific about stack choices and reasoning.
+State your feasibility score (1-10) clearly near the end.
+Write in paragraphs — no bullet dumps."""
 
         try:
-            # Invoke model with extended thinking
             response = await self.invoke_model(
                 prompt=analysis_prompt,
                 context=context,
                 use_tools=True,
             )
-            
-            # Extract the analysis
+
             analysis = response.get("text", "")
             reasoning = response.get("reasoning", "")
-            
-            # Parse key information from the analysis
-            tech_analysis = self._parse_analysis(analysis)
-            
-            # Create HITL checkpoint for review
-            checkpoint = self.create_hitl_checkpoint(
-                gate_type=HITLGateType.AGENT_DRAFT_REVIEW,
-                prompt=f"ARIA (CTO) has completed the technical analysis. Please review:\n\n{analysis[:500]}...",
-                options=[HITLDecision.APPROVE, HITLDecision.EDIT, HITLDecision.REJECT],
-                metadata={"full_analysis": analysis, "tech_analysis": tech_analysis},
+
+            # ── Structured extraction replaces brittle regex ──────────────────
+            tech_metadata = await self.structured_extract(
+                text=analysis,
+                schema={
+                    "tech_stack": "list of technology names mentioned as recommendations",
+                    "complexity": "one of: low, medium, high",
+                    "feasibility_score": "integer 1-10",
+                    "risks": "list of up to 4 key technical risks as short strings",
+                    "mvp_timeline": "string estimate like '2-3 months'",
+                },
+                context=context,
             )
-            
+
+            # ── Skip noisy mid-flow HITL — only surface if analysis is weak ──
+            checkpoint = None
+            if tech_metadata.get("feasibility_score", 10) <= 3:
+                checkpoint = self.create_hitl_checkpoint(
+                    gate_type=HITLGateType.AGENT_DRAFT_REVIEW,
+                    prompt=(
+                        f"ARIA flagged low technical feasibility "
+                        f"(score: {tech_metadata.get('feasibility_score')}/10). "
+                        f"Review before proceeding:\n\n{analysis[:800]}"
+                    ),
+                    options=[HITLDecision.APPROVE, HITLDecision.EDIT, HITLDecision.REJECT],
+                    metadata={"full_analysis": analysis},
+                )
+
             return self.format_response(
                 content=analysis,
                 reasoning=reasoning,
                 hitl_checkpoint=checkpoint,
                 metadata={
-                    "tech_stack": tech_analysis.get("tech_stack", []),
-                    "complexity": tech_analysis.get("complexity", "medium"),
-                    "feasibility_score": tech_analysis.get("feasibility_score", 7),
-                    "risks": tech_analysis.get("risks", []),
+                    "tech_stack": tech_metadata.get("tech_stack", []),
+                    "complexity": tech_metadata.get("complexity", "medium"),
+                    "feasibility_score": tech_metadata.get("feasibility_score", 7),
+                    "risks": tech_metadata.get("risks", []),
+                    "mvp_timeline": tech_metadata.get("mvp_timeline", ""),
                 },
             )
-            
+
         except Exception as e:
             logger.error(f"ARIA execution error: {e}")
             return self.format_response(
-                content="I encountered an error while analyzing the technical aspects.",
+                content="I ran into an error during technical analysis.",
                 success=False,
                 error=str(e),
             )
-    
-    def _parse_analysis(self, analysis: str) -> Dict[str, Any]:
-        """
-        Parse the analysis text to extract structured information.
-        """
-        result = {
-            "tech_stack": [],
-            "complexity": "medium",
-            "feasibility_score": 7,
-            "risks": [],
-            "timeline": "3-6 months",
-        }
-        
-        analysis_lower = analysis.lower()
-        
-        # Detect complexity
-        if any(word in analysis_lower for word in ["high complexity", "complex", "difficult", "challenging"]):
-            result["complexity"] = "high"
-        elif any(word in analysis_lower for word in ["low complexity", "simple", "easy", "straightforward"]):
-            result["complexity"] = "low"
-        
-        # Improved tech stack detection
-        tech_keywords = [
-            "python", "javascript", "typescript", "react", "vue", "angular", "next.js",
-            "node.js", "django", "fastapi", "flask", "postgresql", "mongodb", "sqlite",
-            "redis", "aws", "gcp", "azure", "docker", "kubernetes", "tailwind", "shadcn",
-            "supabase", "firebase", "bedrock", "nova", "lambda", "s3", "rds"
-        ]
-        
-        for tech in tech_keywords:
-            # Use regex to match whole words/phrases only to avoid false positives
-            if re.search(rf'\b{re.escape(tech)}\b', analysis_lower):
-                result["tech_stack"].append(tech.upper())
-        
-        # Detect feasibility score if mentioned like "Score: 8/10"
-        score_match = re.search(r'(?:score|feasibility):\s*(\d+)(?:/10)?', analysis_lower)
-        if score_match:
-            result["feasibility_score"] = int(score_match.group(1))
-            
-        return result
-    
+
     def get_voice_config(self) -> Dict[str, Any]:
-        """
-        Get Nova 2 Sonic voice configuration for ARIA.
-        
-        ARIA has a calm, precise, technical female voice.
-        """
         return {
             "voice_id": "aria",
             "style": "technical",

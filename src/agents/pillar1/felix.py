@@ -2,15 +2,8 @@
 FELIX - CFO Agent
 
 Estimates costs, monthly burn rate, expected revenue milestones, and runway.
-Uses Nova 2 Lite's built-in web grounding tool to pull live pricing data
-(cloud costs, API costs, SaaS tool costs).
-
-Gives a realistic financial picture grounded in real numbers.
-
-NOW ENHANCED WITH:
-- Real web grounding via WebGroundingTool for live pricing data
-- AWS pricing lookups
-- SaaS and API cost research
+Uses web grounding for live pricing data. Gives realistic numbers grounded
+in real market data, not optimistic founder projections.
 """
 
 import logging
@@ -18,146 +11,95 @@ from typing import Any, Dict, List, Optional
 
 from src.agents.base import AgentContext, AgentResponse, BaseAgent, Tool
 from src.core.models import AgentRole, HITLDecision, HITLGateType, ReasoningEffort
-from src.tools.advanced_tools import WebGroundingTool, get_tool_registry
+from src.tools.advanced_tools import WebGroundingTool
 
 logger = logging.getLogger(__name__)
 
-FELIX_SYSTEM_PROMPT = """You are FELIX, the Chief Financial Officer (CFO) agent for Helix.
+FELIX_SYSTEM_PROMPT = """You are FELIX, the Chief Financial Officer (CFO) for Helix.
 
-Your role is to provide comprehensive financial analysis and projections for startup ideas.
+## Who You Are
+You've seen enough startup financials to know that founders almost always underestimate
+burn and overestimate early revenue. You're not a pessimist — you're a realist who
+wants companies to survive. You use actual numbers, not vague ranges. You explain
+your assumptions so founders can push back if they're wrong.
 
-## Your Responsibilities:
-1. **Cost Estimation**: Calculate development costs, infrastructure costs, and operational expenses
-2. **Burn Rate Analysis**: Estimate monthly burn rate based on team size and operations
-3. **Revenue Projections**: Model potential revenue streams and milestones
-4. **Runway Calculation**: Determine how long funding will last
-5. **Pricing Research**: Use web grounding to find current market prices for services
-6. **Financial Risk Assessment**: Identify financial risks and mitigation strategies
-7. **Funding Requirements**: Estimate how much funding is needed for different stages
+## How You Communicate
+- Open with one sentence reacting to the financial shape of this specific idea —
+  is this capital-intensive or lean? Does the revenue model make sense immediately?
+- Write in paragraphs with numbers woven in naturally. Avoid bullet-only responses.
+- Always state your assumptions explicitly: "I'm assuming a 3-person team at $8k/month
+  average..." — so the founder can correct you
+- Give ranges only when genuinely uncertain, and explain why
+- When you use live pricing data from web search, cite the source inline
 
-## Your Personality:
-- Measured, confident, and data-driven
-- You speak with authority but acknowledge market uncertainties
-- You prioritize realistic projections over optimistic ones
-- You always cite sources when using market data
+## What You Must Cover (weave in naturally)
+1. Initial build cost — what does it cost to get to launch?
+2. Monthly burn breakdown — people, infrastructure, tools, other
+3. Revenue model reality check — when could this realistically make money?
+4. Runway at $250k, $500k, and $1M seed rounds
+5. The single biggest financial risk (not a list of five)
+6. What fundraising stage this idea is suited for right now
 
-## Output Format:
-Structure your analysis with clear sections:
-1. Initial Development Costs
-2. Monthly Operating Costs Breakdown
-3. Estimated Monthly Burn Rate
-4. Revenue Model & Projections
-5. Break-even Analysis
-6. Runway Calculation (at different funding levels)
-7. Key Financial Risks
-8. Recommended Funding Strategy
-
-Always provide specific numbers with clear assumptions stated."""
+## What You Never Do
+- Never present fantasy hockey-stick revenue projections without caveats
+- Never give burn rates without stating the team size assumption
+- Never say "it depends" without following with your best estimate
+- Never ignore ARIA's technical complexity when estimating build costs"""
 
 
 class FelixAgent(BaseAgent):
-    """
-    FELIX - CFO Agent for financial analysis.
-    
-    Uses web grounding for live pricing data via WebGroundingTool.
-    """
-    
+    """FELIX - CFO Agent for financial analysis with live web pricing data."""
+
     def __init__(self):
         super().__init__(
             role=AgentRole.FELIX,
             name="FELIX",
-            description="CFO Agent - Financial projections and cost analysis expert with live web data",
+            description="CFO Agent - Financial projections and cost analysis with live web data",
             system_prompt=FELIX_SYSTEM_PROMPT,
             reasoning_effort=ReasoningEffort.MEDIUM,
         )
-        
-        # Initialize web grounding tool for live pricing
         self._web_grounding = WebGroundingTool()
-        
-        # Register FELIX-specific tools
         self._register_felix_tools()
-    
+
     def _register_felix_tools(self) -> None:
-        """Register tools specific to FELIX."""
-        
-        # Web grounding tool for live pricing
         self.register_tool(Tool(
             name="web_search_pricing",
-            description="Search the web for current pricing information for cloud services, APIs, and SaaS tools",
+            description="Search the web for current pricing of cloud services, APIs, and SaaS tools",
             parameters={
-                "query": {
-                    "type": "string",
-                    "description": "Search query for pricing information",
-                },
+                "query": {"type": "string", "description": "Search query for pricing"},
                 "category": {
                     "type": "string",
                     "enum": ["cloud", "api", "saas", "infrastructure", "general"],
-                    "description": "Category of pricing to search for",
                 },
             },
             handler=self._web_search_pricing,
         ))
-        
-        # Cost calculator tool
+
         self.register_tool(Tool(
             name="calculate_burn_rate",
-            description="Calculate monthly burn rate based on team and infrastructure",
+            description="Calculate monthly burn rate from team and infrastructure inputs",
             parameters={
-                "team_size": {
-                    "type": "integer",
-                    "description": "Number of team members",
-                },
-                "avg_salary": {
-                    "type": "number",
-                    "description": "Average monthly salary per team member",
-                },
-                "infrastructure_cost": {
-                    "type": "number",
-                    "description": "Monthly infrastructure cost",
-                },
-                "other_costs": {
-                    "type": "number",
-                    "description": "Other monthly operational costs",
-                },
+                "team_size": {"type": "integer"},
+                "avg_salary": {"type": "number", "description": "Monthly salary per person (USD)"},
+                "infrastructure_cost": {"type": "number"},
+                "other_costs": {"type": "number"},
             },
             handler=self._calculate_burn_rate,
         ))
-        
-        # Runway calculator
+
         self.register_tool(Tool(
             name="calculate_runway",
-            description="Calculate runway based on funding and burn rate",
+            description="Calculate runway in months given funding and burn",
             parameters={
-                "funding": {
-                    "type": "number",
-                    "description": "Total funding available",
-                },
-                "monthly_burn": {
-                    "type": "number",
-                    "description": "Monthly burn rate",
-                },
-                "revenue": {
-                    "type": "number",
-                    "description": "Expected monthly revenue (optional)",
-                    "default": 0,
-                },
+                "funding": {"type": "number"},
+                "monthly_burn": {"type": "number"},
+                "revenue": {"type": "number", "default": 0},
             },
             handler=self._calculate_runway,
         ))
-    
-    async def _web_search_pricing(
-        self,
-        query: str,
-        category: str,
-    ) -> Dict[str, Any]:
-        """
-        Search for pricing information using REAL web grounding.
-        
-        Uses Nova 2 Lite's built-in web grounding via WebGroundingTool
-        to fetch live, current pricing data from the web.
-        """
+
+    async def _web_search_pricing(self, query: str, category: str) -> Dict[str, Any]:
         try:
-            # Use the real web grounding tool for live data
             if category == "cloud":
                 result = await self._web_grounding.get_aws_pricing(query)
             elif category == "api":
@@ -166,79 +108,58 @@ class FelixAgent(BaseAgent):
                 result = await self._web_grounding.get_saas_pricing(query)
             else:
                 result = await self._web_grounding.execute(
-                    query=f"{query} pricing cost",
-                    category="pricing",
-                    recency="month",
+                    query=f"{query} pricing cost", category="pricing", recency="month"
                 )
-            
+
             if result.success:
                 return {
                     "query": query,
-                    "category": category,
                     "results": result.output.get("results", ""),
                     "sources": result.output.get("sources", []),
                     "live_data": True,
-                    "execution_time": result.execution_time,
                 }
-            else:
-                # Fallback to cached data if web grounding fails
-                logger.warning(f"Web grounding failed, using fallback: {result.error}")
-                return await self._get_fallback_pricing(query, category)
-                
+            return await self._fallback_pricing(query, category)
+
         except Exception as e:
-            logger.error(f"Web search pricing error: {e}")
-            return await self._get_fallback_pricing(query, category)
-    
-    async def _get_fallback_pricing(
-        self,
-        query: str,
-        category: str,
-    ) -> Dict[str, Any]:
-        """
-        Fallback pricing data when web grounding is unavailable.
-        """
-        # Cached pricing data as fallback
-        pricing_data = {
+            logger.warning(f"Web grounding failed: {e}")
+            return await self._fallback_pricing(query, category)
+
+    async def _fallback_pricing(self, query: str, category: str) -> Dict[str, Any]:
+        """Cached pricing data used when web grounding is unavailable."""
+        data = {
             "cloud": {
-                "aws_ec2_t3_medium": {"price": 0.0416, "unit": "per hour", "source": "AWS Pricing (cached)"},
-                "aws_rds_postgres": {"price": 0.095, "unit": "per hour", "source": "AWS Pricing (cached)"},
-                "aws_s3": {"price": 0.023, "unit": "per GB/month", "source": "AWS Pricing (cached)"},
-                "aws_lambda": {"price": 0.0000166667, "unit": "per GB-second", "source": "AWS Pricing (cached)"},
-                "aws_bedrock_nova_lite": {"price": 0.00006, "unit": "per 1K input tokens", "source": "AWS Pricing (cached)"},
-                "vercel_pro": {"price": 20, "unit": "per month", "source": "Vercel Pricing (cached)"},
+                "aws_ec2_t3_medium": "$0.0416/hr",
+                "aws_rds_postgres_t3_medium": "$0.095/hr",
+                "aws_s3": "$0.023/GB/month",
+                "aws_lambda": "$0.0000166667/GB-second",
+                "aws_bedrock_nova_lite": "$0.00006/1K input tokens",
+                "vercel_pro": "$20/month",
+                "railway_starter": "$5/month",
             },
             "api": {
-                "openai_gpt4": {"price": 0.03, "unit": "per 1K tokens", "source": "OpenAI Pricing (cached)"},
-                "anthropic_claude": {"price": 0.015, "unit": "per 1K tokens", "source": "Anthropic Pricing (cached)"},
-                "stripe": {"price": 2.9, "unit": "% + $0.30 per transaction", "source": "Stripe Pricing (cached)"},
-                "twilio_sms": {"price": 0.0079, "unit": "per message", "source": "Twilio Pricing (cached)"},
-                "sendgrid": {"price": 19.95, "unit": "per month (40K emails)", "source": "SendGrid Pricing (cached)"},
+                "openai_gpt4o": "$0.0025/1K input tokens",
+                "anthropic_claude_sonnet": "$0.003/1K input tokens",
+                "stripe": "2.9% + $0.30/transaction",
+                "twilio_sms": "$0.0079/message",
+                "sendgrid_essentials": "$19.95/month (50K emails)",
+                "resend": "$20/month (50K emails)",
             },
             "saas": {
-                "slack_business": {"price": 12.50, "unit": "per user/month", "source": "Slack Pricing (cached)"},
-                "github_team": {"price": 4, "unit": "per user/month", "source": "GitHub Pricing (cached)"},
-                "notion_team": {"price": 10, "unit": "per user/month", "source": "Notion Pricing (cached)"},
-                "linear": {"price": 8, "unit": "per user/month", "source": "Linear Pricing (cached)"},
-                "figma_professional": {"price": 15, "unit": "per editor/month", "source": "Figma Pricing (cached)"},
-            },
-            "infrastructure": {
-                "domain": {"price": 12, "unit": "per year", "source": "Average (cached)"},
-                "ssl_certificate": {"price": 0, "unit": "free with Let's Encrypt", "source": "Let's Encrypt"},
-                "monitoring_datadog": {"price": 15, "unit": "per host/month", "source": "Datadog Pricing (cached)"},
+                "github_team": "$4/user/month",
+                "linear": "$8/user/month",
+                "figma_professional": "$15/editor/month",
+                "notion_team": "$10/user/month",
+                "vercel_pro": "$20/month",
+                "supabase_pro": "$25/month",
             },
         }
-        
-        category_data = pricing_data.get(category, {})
-        
         return {
             "query": query,
-            "category": category,
-            "results": category_data,
+            "results": data.get(category, {}),
             "live_data": False,
-            "note": "Using cached pricing data. Live web grounding unavailable.",
-            "last_updated": "2026-03",
+            "note": "Cached pricing — web grounding unavailable. Verify current rates.",
         }
-    
+
     async def _calculate_burn_rate(
         self,
         team_size: int,
@@ -246,183 +167,134 @@ class FelixAgent(BaseAgent):
         infrastructure_cost: float,
         other_costs: float,
     ) -> Dict[str, Any]:
-        """Calculate monthly burn rate."""
-        personnel_cost = team_size * avg_salary
-        total_burn = personnel_cost + infrastructure_cost + other_costs
-        
-        # Add typical overhead (benefits, taxes, etc.) - roughly 30%
-        overhead = personnel_cost * 0.30
-        total_with_overhead = total_burn + overhead
-        
+        personnel = team_size * avg_salary
+        overhead = personnel * 0.30  # benefits, taxes, etc.
+        total = personnel + overhead + infrastructure_cost + other_costs
+
         return {
-            "personnel_cost": personnel_cost,
-            "overhead": overhead,
-            "infrastructure_cost": infrastructure_cost,
-            "other_costs": other_costs,
-            "total_monthly_burn": total_with_overhead,
-            "breakdown": {
-                "personnel_percentage": (personnel_cost + overhead) / total_with_overhead * 100,
-                "infrastructure_percentage": infrastructure_cost / total_with_overhead * 100,
-                "other_percentage": other_costs / total_with_overhead * 100,
-            },
+            "personnel": personnel,
+            "overhead_30pct": overhead,
+            "infrastructure": infrastructure_cost,
+            "other": other_costs,
+            "total_monthly_burn": round(total, 2),
+            "note": "30% overhead applied to personnel for benefits/taxes/payroll",
         }
-    
+
     async def _calculate_runway(
-        self,
-        funding: float,
-        monthly_burn: float,
-        revenue: float = 0,
+        self, funding: float, monthly_burn: float, revenue: float = 0
     ) -> Dict[str, Any]:
-        """Calculate runway in months."""
         net_burn = monthly_burn - revenue
-        
         if net_burn <= 0:
-            runway_months = float('inf')
-            status = "profitable"
-        else:
-            runway_months = funding / net_burn
-            if runway_months > 24:
-                status = "healthy"
-            elif runway_months > 12:
-                status = "adequate"
-            elif runway_months > 6:
-                status = "concerning"
-            else:
-                status = "critical"
-        
+            return {"status": "profitable", "runway_months": "∞", "net_burn": net_burn}
+
+        runway = funding / net_burn
+        status = (
+            "healthy" if runway > 24
+            else "adequate" if runway > 12
+            else "concerning" if runway > 6
+            else "critical"
+        )
+
         return {
             "funding": funding,
             "monthly_burn": monthly_burn,
             "monthly_revenue": revenue,
-            "net_monthly_burn": net_burn,
-            "runway_months": runway_months if runway_months != float('inf') else "Infinite (profitable)",
+            "net_burn": net_burn,
+            "runway_months": round(runway, 1),
             "status": status,
-            "recommendation": self._get_runway_recommendation(runway_months, status),
         }
-    
-    def _get_runway_recommendation(self, months: float, status: str) -> str:
-        """Get recommendation based on runway status."""
-        recommendations = {
-            "profitable": "Focus on growth and reinvestment.",
-            "healthy": "Good position. Consider strategic investments.",
-            "adequate": "Start planning next funding round in 6 months.",
-            "concerning": "Prioritize fundraising or cost reduction immediately.",
-            "critical": "Emergency measures needed. Cut costs or seek bridge funding.",
-        }
-        return recommendations.get(status, "Review financial strategy.")
-    
+
     async def execute(self, context: AgentContext) -> AgentResponse:
-        """
-        Execute FELIX's financial analysis.
-        
-        Args:
-            context: Agent execution context with user input
-            
-        Returns:
-            AgentResponse with financial analysis
-        """
         logger.info(f"FELIX analyzing: {context.user_input[:100]}...")
-        
-        # Get technical context from ARIA if available
-        tech_context = context.metadata.get("aria_analysis", "")
-        
-        # Build the analysis prompt
-        analysis_prompt = f"""Analyze the following startup idea from a financial perspective:
 
-## Startup Idea:
-{context.user_input}
+        # ── Pull cross-agent context ──────────────────────────────────────────
+        aria_analysis = context.metadata.get("aria_analysis", "")
+        intake_answers = context.metadata.get("intake_answers", {})
 
-## Technical Context (from CTO):
-{tech_context if tech_context else "No technical analysis available yet."}
+        intake_summary = (
+            "\n".join(f"- {k.replace('_', ' ').title()}: {v}"
+                      for k, v in intake_answers.items())
+            if intake_answers else "No structured intake data."
+        )
 
-## Additional Context:
-{context.metadata.get('additional_context', 'No additional context provided.')}
+        # Derive complexity signal from ARIA for smarter cost estimates
+        complexity_hint = ""
+        if aria_analysis:
+            if "high complexity" in aria_analysis.lower() or "complex" in aria_analysis.lower():
+                complexity_hint = "ARIA flagged HIGH complexity — factor in longer build time and higher dev costs."
+            elif "low complexity" in aria_analysis.lower() or "simple" in aria_analysis.lower():
+                complexity_hint = "ARIA flagged LOW complexity — lean toward tighter cost estimates."
 
-Please provide a comprehensive financial analysis following your standard output format.
+        analysis_prompt = f"""You're the CFO for Helix. Analyze this startup's financial picture:
 
-Use the available tools to:
-1. Search for current pricing of relevant cloud services and APIs
-2. Calculate realistic burn rates based on team size
-3. Project runway at different funding levels
+IDEA: {context.user_input}
 
-Be specific with numbers and always state your assumptions clearly.
-Consider both bootstrapped and funded scenarios."""
+FOUNDER CONTEXT:
+{intake_summary}
+
+TECHNICAL ANALYSIS FROM ARIA (CTO):
+{aria_analysis if aria_analysis else "Not yet available."}
+
+COMPLEXITY SIGNAL: {complexity_hint if complexity_hint else "Not assessed."}
+
+Use the web_search_pricing tool to look up actual costs for the infrastructure and
+APIs this product will likely need. Then use calculate_burn_rate and calculate_runway
+to ground your projections in real numbers.
+
+State your assumptions clearly. Cover:
+- What it costs to build to launch (one-time)
+- Monthly burn (with team size assumption stated)
+- Revenue reality check — when could this break even?
+- Runway at $250k, $500k, $1M
+- The single biggest financial risk
+
+Write in paragraphs. Be specific. Cite your sources when using live pricing data."""
 
         try:
-            # Invoke model with tools for web grounding
             response = await self.invoke_model(
                 prompt=analysis_prompt,
                 context=context,
                 use_tools=True,
             )
-            
-            # Extract the analysis
+
             analysis = response.get("text", "")
             reasoning = response.get("reasoning", "")
-            
-            # Parse key financial metrics
-            financial_metrics = self._parse_financial_metrics(analysis)
-            
-            # Create HITL checkpoint for review
-            checkpoint = self.create_hitl_checkpoint(
-                gate_type=HITLGateType.AGENT_DRAFT_REVIEW,
-                prompt=f"FELIX (CFO) has completed the financial analysis. Please review:\n\n{analysis[:500]}...",
-                options=[HITLDecision.APPROVE, HITLDecision.EDIT, HITLDecision.REJECT],
-                metadata={"full_analysis": analysis, "financial_metrics": financial_metrics},
+
+            # ── Structured extraction ─────────────────────────────────────────
+            financial_metadata = await self.structured_extract(
+                text=analysis,
+                schema={
+                    "monthly_burn_rate": "number in USD, extract the primary burn rate estimate",
+                    "runway_months": "integer, extract runway at the most prominent funding level",
+                    "initial_build_cost": "number in USD, one-time cost to reach launch",
+                    "revenue_milestones": "list of strings describing revenue milestones",
+                    "funding_stage": "string: pre-seed, seed, series-a, or bootstrapped",
+                },
+                context=context,
             )
-            
+
             return self.format_response(
                 content=analysis,
                 reasoning=reasoning,
-                hitl_checkpoint=checkpoint,
+                hitl_checkpoint=None,  # Don't interrupt flow mid-analysis
                 metadata={
-                    "monthly_burn_rate": financial_metrics.get("burn_rate"),
-                    "runway_months": financial_metrics.get("runway"),
-                    "initial_funding_needed": financial_metrics.get("funding_needed"),
-                    "revenue_milestones": financial_metrics.get("milestones", []),
+                    "monthly_burn_rate": financial_metadata.get("monthly_burn_rate"),
+                    "runway_months": financial_metadata.get("runway_months"),
+                    "initial_build_cost": financial_metadata.get("initial_build_cost"),
+                    "revenue_milestones": financial_metadata.get("revenue_milestones", []),
+                    "funding_stage": financial_metadata.get("funding_stage", "seed"),
                 },
             )
-            
+
         except Exception as e:
             logger.error(f"FELIX execution error: {e}")
             return self.format_response(
-                content="I encountered an error while analyzing the financial aspects.",
+                content="I ran into an error during financial analysis.",
                 success=False,
                 error=str(e),
             )
-    
-    def _parse_financial_metrics(self, analysis: str) -> Dict[str, Any]:
-        """
-        Parse the analysis text to extract financial metrics.
-        """
-        result = {
-            "burn_rate": None,
-            "runway": None,
-            "funding_needed": None,
-            "milestones": [],
-        }
-        
-        # Simple parsing - in production, use structured output
-        import re
-        
-        # Try to find burn rate mentions
-        burn_match = re.search(r'\$?([\d,]+)\s*(?:per month|/month|monthly burn)', analysis, re.IGNORECASE)
-        if burn_match:
-            result["burn_rate"] = float(burn_match.group(1).replace(",", ""))
-        
-        # Try to find runway mentions
-        runway_match = re.search(r'(\d+)\s*months?\s*(?:runway|of runway)', analysis, re.IGNORECASE)
-        if runway_match:
-            result["runway"] = int(runway_match.group(1))
-        
-        return result
-    
+
     def get_voice_config(self) -> Dict[str, Any]:
-        """
-        Get Nova 2 Sonic voice configuration for FELIX.
-        
-        FELIX has a measured, confident male voice.
-        """
         return {
             "voice_id": "felix",
             "style": "professional",

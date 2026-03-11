@@ -1,8 +1,14 @@
 @import "tailwindcss";
 
 :root {
-  --background: #020617;
-  --foreground: #f8fafc;
+  --background: #212121;
+  --foreground: #ececec;
+  --surface: #2f2f2f;
+  --surface-hover: #3a3a3a;
+  --border: #444;
+  --border-hover: #666;
+  --accent: #d97706;
+  --accent-hover: #f59e0b;
 }
 
 @theme inline {
@@ -12,20 +18,15 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #020617;
-    --foreground: #f8fafc;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans), system-ui, sans-serif;
+  font-family: var(--font-sans), -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom Scrollbar */
+/* Custom Scrollbar - Claude.ai style */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -36,12 +37,12 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #3a3a3a;
   border-radius: 3px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: #4a4a4a;
 }
 
 /* Global scrollbar */
@@ -51,16 +52,16 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: #1a1a1a;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: #3a3a3a;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #4a4a4a;
 }
 
 /* Animations */
@@ -108,16 +109,34 @@ body {
 
 @keyframes pulse-glow {
   0%, 100% {
-    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.4);
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4);
   }
   50% {
-    box-shadow: 0 0 20px 5px rgba(249, 115, 22, 0.2);
+    box-shadow: 0 0 20px 5px rgba(37, 99, 235, 0.2);
+  }
+}
+
+@keyframes sidebar-expand {
+  from {
+    width: 64px;
+  }
+  to {
+    width: 256px;
+  }
+}
+
+@keyframes sidebar-collapse {
+  from {
+    width: 256px;
+  }
+  to {
+    width: 64px;
   }
 }
 
 /* Utility classes */
 .animate-fade-in {
-  animation: fade-in 0.3s ease-out;
+  animation: fade-in 0.2s ease-out;
 }
 
 .animate-slide-in-bottom {
@@ -138,7 +157,7 @@ body {
 
 /* Glass effect */
 .glass-card {
-  background: rgba(15, 23, 42, 0.6);
+  background: rgba(37, 37, 37, 0.8);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
@@ -158,21 +177,21 @@ button:focus-visible {
   outline: none;
 }
 
-/* Selection */
+/* Selection - Claude.ai blue */
 ::selection {
-  background: rgba(249, 115, 22, 0.3);
+  background: rgba(37, 99, 235, 0.3);
   color: white;
 }
 
 /* Prose overrides for markdown */
 .prose {
-  --tw-prose-body: #cbd5e1;
-  --tw-prose-headings: #f8fafc;
+  --tw-prose-body: #d4d4d4;
+  --tw-prose-headings: #f5f5f5;
   --tw-prose-links: #60a5fa;
-  --tw-prose-bold: #f8fafc;
+  --tw-prose-bold: #f5f5f5;
   --tw-prose-code: #93c5fd;
-  --tw-prose-pre-bg: #0f172a;
-  --tw-prose-hr: #334155;
+  --tw-prose-pre-bg: #252525;
+  --tw-prose-hr: #3a3a3a;
 }
 
 .prose code {
@@ -181,11 +200,11 @@ button:focus-visible {
 }
 
 .prose pre {
-  border: 1px solid #1e293b;
+  border: 1px solid #3a3a3a;
   border-radius: 0.75rem;
 }
 
-/* Typing indicator bounce */
+/* Typing indicator bounce - Claude.ai style */
 @keyframes typing-bounce {
   0%, 60%, 100% {
     transform: translateY(0);
@@ -211,11 +230,67 @@ button:focus-visible {
   animation-delay: 0.4s;
 }
 
-/* Smooth transitions */
-* {
-  transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 150ms;
+/* Smooth transitions for sidebar */
+.sidebar-transition {
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Chat message animations */
+@keyframes message-appear {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-appear {
+  animation: message-appear 0.3s ease-out;
+}
+
+/* Input focus ring - Claude.ai style */
+.input-focus-ring:focus-within {
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.3);
+}
+
+/* Button hover effects */
+.btn-hover {
+  transition: all 0.15s ease;
+}
+
+.btn-hover:hover {
+  transform: translateY(-1px);
+}
+
+.btn-hover:active {
+  transform: translateY(0);
+}
+
+/* Agent card glow effect */
+.agent-glow {
+  position: relative;
+}
+
+.agent-glow::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, var(--agent-color, #3b82f6) 0%, transparent 50%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.agent-glow:hover::before {
+  opacity: 1;
 }
 
 /* Disable transitions for animations */
@@ -223,4 +298,16 @@ button:focus-visible {
 .animate-out,
 [class*="animate-"] {
   transition: none;
+}
+
+/* Smooth global transitions */
+* {
+  transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* Exclude transform from global transitions to avoid conflicts */
+*:not([class*="animate-"]):not(.sidebar-transition) {
+  transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow;
 }

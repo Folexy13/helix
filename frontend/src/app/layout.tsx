@@ -1,5 +1,4 @@
 import './globals.css';
-import Sidebar from '@/components/Sidebar';
 import HitlDrawerWrapper from '@/components/HitlDrawerWrapper';
 import { HelixSocketProvider } from '@/hooks/useHelixSocket';
 
@@ -10,12 +9,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className="antialiased flex h-screen overflow-hidden bg-[#020617] text-foreground">
+      <body className="antialiased h-screen overflow-hidden bg-[#1a1a1a] text-foreground">
         <HelixSocketProvider>
-          <Sidebar />
-          <main className="flex-1 flex flex-col min-w-0">
-            {children}
-          </main>
+          {children}
           <HitlDrawerWrapper />
         </HelixSocketProvider>
       </body>

@@ -233,20 +233,48 @@ async def start_pipeline(sid, data):
     logger.info(f"Received start_pipeline event from {sid}: {data}")
     pillar = data.get('pillar')
     user_input = data.get('input')
+    context = data.get('context')  # Context from previous pillar transition
     
     logger.info(f"Starting pipeline for Pillar {pillar} via Socket {sid}")
     
-    # Create Session State
-    session_state = SessionState()
+    # Check if we have existing session state (for pillar transitions)
+    existing_session = active_sessions.get(sid)
+    existing_orchestrator = orchestrators.get(sid)
+    
+    # Create or reuse Session State
+    if existing_session and context and context.get('from_pillar'):
+        # Pillar transition - preserve context
+        session_state = existing_session
+        logger.info(f"Pillar transition from {context.get('from_pillar')} to {pillar}")
+    else:
+        # New session
+        session_state = SessionState()
+    
     checkpoint_manager = CheckpointManager(session_state)
     hitl_handler = APIHITLHandler(checkpoint_manager)
-    intelligent_orchestrator = IntelligentOrchestrator(session_state)
+    
+    # Reuse or create orchestrator
+    if existing_orchestrator and context:
+        intelligent_orchestrator = existing_orchestrator
+        # Add transition context to conversation
+        if context.get('summary'):
+            intelligent_orchestrator.add_conversation_turn(
+                "system",
+                f"[Context from Pillar {context.get('from_pillar')}]: {context.get('summary')}"
+            )
+    else:
+        intelligent_orchestrator = IntelligentOrchestrator(session_state)
     
     # Store globally for this connection
     active_sessions[sid] = session_state
     hitl_handlers[sid] = hitl_handler
     orchestrators[sid] = intelligent_orchestrator
-    conversation_contexts[sid] = {"pillar": pillar, "started_at": datetime.utcnow().isoformat()}
+    conversation_contexts[sid] = {
+        "pillar": pillar, 
+        "started_at": datetime.utcnow().isoformat(),
+        "from_pillar": context.get('from_pillar') if context else None,
+        "transition_context": context.get('summary') if context else None,
+    }
 
     # Wire up intelligent orchestrator callbacks
     def on_handoff(handoff: AgentHandoff):
@@ -378,6 +406,53 @@ async def request_clarification(sid, data):
             sid,
             agent.upper(),
             "I'll incorporate this into my analysis. Please continue with the current checkpoint.",
+            'action'
+        )
+
+
+@sio.event
+async def pillar_transition(sid, data):
+    """Handle intelligent pillar transitions with context passing."""
+    from_pillar = data.get('from_pillar')
+    to_pillar = data.get('to_pillar')
+    context = data.get('context', {})
+    
+    logger.info(f"Pillar transition: {from_pillar} -> {to_pillar}")
+    
+    orchestrator = orchestrators.get(sid)
+    session_state = active_sessions.get(sid)
+    
+    if orchestrator and session_state:
+        # Generate context summary from current pillar's conversation
+        context_summary = orchestrator._generate_context_summary() if orchestrator else ""
+        
+        # Get key insights from the conversation
+        recent_results = [
+            turn.content[:300] for turn in orchestrator.conversation_history[-10:]
+            if turn.speaker != "user"
+        ]
+        
+        # Emit transition acknowledgment
+        await sio.emit('pillar_transition_ready', {
+            'from_pillar': from_pillar,
+            'to_pillar': to_pillar,
+            'context_summary': context_summary,
+            'key_insights': recent_results[-3:] if recent_results else [],
+            'user_intent': context.get('userIntent', 'Continue workflow'),
+        }, to=sid)
+        
+        # Update conversation context
+        conversation_contexts[sid] = {
+            **conversation_contexts.get(sid, {}),
+            'pillar': to_pillar,
+            'from_pillar': from_pillar,
+            'transition_context': context_summary,
+        }
+        
+        await stream_agent_log(
+            sid,
+            'SYSTEM',
+            f"Transitioning to {'Founding Team' if to_pillar == 1 else 'Engineering Workforce' if to_pillar == 2 else 'Knowledge Base'}. Context has been preserved.",
             'action'
         )
 
@@ -754,18 +829,46 @@ async def run_pillar2_workflow(
     orchestrator: IntelligentOrchestrator,
     user_input: str
 ):
-    """Executes Pillar 2 with intelligent orchestration."""
+    """
+    Executes Pillar 2 with intelligent orchestration.
+    
+    This workflow is now fully conversational - no blocking HITL checkpoints.
+    The AI proceeds autonomously while keeping the user informed.
+    """
     orch_agent = OrchestratorAgent()
+    
+    # Check if we have context from pillar 1 transition
+    ctx = conversation_contexts.get(sid, {})
+    from_pillar = ctx.get('from_pillar')
+    transition_context = ctx.get('transition_context')
+    
+    # If transitioning from pillar 1, incorporate the context
+    if from_pillar == 1 and transition_context:
+        enhanced_input = f"""Based on the startup analysis from the Founding Team:
+
+{transition_context}
+
+User's request: {user_input}
+
+Build a complete, production-ready frontend application that addresses this startup idea."""
+        orchestrator.add_conversation_turn("system", f"[Context from Founding Team]: {transition_context[:500]}...")
+    else:
+        enhanced_input = user_input
     
     orchestrator.add_conversation_turn("user", user_input)
     
     context = AgentContext(
         session_state=session_state,
         conversation=session_state.pillar2_conversation,
-        user_input=user_input,
+        user_input=enhanced_input,
     )
     
-    await stream_agent_log(sid, 'ORCHESTRATOR', f'Starting Engineering Workforce for: {user_input}', 'action')
+    # Add any pillar 1 context to metadata
+    if from_pillar == 1:
+        context.metadata["from_pillar1"] = True
+        context.metadata["pillar1_context"] = transition_context
+    
+    await stream_agent_log(sid, 'ORCHESTRATOR', f'🚀 Starting Engineering Workforce for: {user_input[:200]}...', 'action')
     await sio.emit('pipeline_update', {
         'current_stage': 'intake',
         'active_agent': 'ORCHESTRATOR',
@@ -774,7 +877,7 @@ async def run_pillar2_workflow(
     }, to=sid)
 
     try:
-        # Step 1: Planning
+        # Step 1: Planning (no blocking - proceed automatically)
         await sio.emit('pipeline_update', {
             'current_stage': 'planning',
             'active_agent': 'PLANNER',
@@ -791,57 +894,9 @@ async def run_pillar2_workflow(
         context.metadata["engineering_spec"] = planner_response.metadata
         context.metadata["spec_text"] = planner_response.content
         
-        # HITL Checkpoint: Review Planning before Coding
-        planner_checkpoint = SmartCheckpoint(
-            gate_type=HITLGateType.SPEC_APPROVAL,
-            pillar=2,
-            agent=AgentRole.PLANNER,
-            prompt="Review the architecture plan before proceeding to code generation",
-            options=[HITLDecision.APPROVE, HITLDecision.REJECT, HITLDecision.MODIFY],
-            context_summary=planner_response.content[:500] + "..." if len(planner_response.content) > 500 else planner_response.content,
-        )
-        
-        # CRITICAL: Register checkpoint BEFORE emitting to frontend
-        # This ensures the checkpoint is in _pending when the user responds
-        hitl_handler.register_checkpoint(str(planner_checkpoint.id), planner_checkpoint)
-        
-        await sio.emit('hitl_checkpoint', {
-            'id': str(planner_checkpoint.id),
-            'gate_type': planner_checkpoint.gate_type.value,
-            'pillar': 2,
-            'agent': 'PLANNER',
-            'prompt': '📋 **Architecture Plan Ready**\n\nReview the proposed architecture, database schema, and project structure before I start generating code.',
-            'options': ['approve', 'reject', 'modify'],
-            'context_summary': 'The PLANNER has designed the technical architecture for your project.',
-            'agent_persona': AGENT_PERSONAS.get('PLANNER'),
-            'allows_follow_up': True,
-            'next_step_options': [
-                {
-                    'id': 'approve',
-                    'label': '✅ Approve & Generate Code',
-                    'description': 'Proceed to code generation with this architecture',
-                    'action': 'approve',
-                    'color': '#10b981',
-                },
-                {
-                    'id': 'modify',
-                    'label': '✏️ Request Changes',
-                    'description': 'Ask for modifications to the plan',
-                    'action': 'modify',
-                    'color': '#f59e0b',
-                },
-            ],
-            'timestamp': datetime.utcnow().isoformat(),
-        }, to=sid)
-        
-        # Wait for user decision - this BLOCKS until user responds
-        planner_decision = await hitl_handler.present_checkpoint(planner_checkpoint)
-        
-        if planner_decision == HITLDecision.REJECT:
-            await stream_agent_log(sid, 'SYSTEM', '❌ Architecture plan rejected. Pipeline stopped.', 'error')
-            return
-        
-        await stream_agent_log(sid, 'SYSTEM', '✅ Architecture approved. Proceeding to code generation...', 'action')
+        # No HITL blocking - proceed directly to coding
+        # User can still provide feedback via chat which will be handled conversationally
+        await stream_agent_log(sid, 'ORCHESTRATOR', '✅ Architecture designed. Proceeding to code generation...', 'action')
         
         # Step 2: Coding
         await sio.emit('pipeline_update', {

@@ -2,16 +2,17 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback, ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { useHelixStore, AgentPersona, HitlCheckpoint, AgentHandoff } from '../store/helixStore';
+import { useHelixStore, AgentPersona, HitlCheckpoint, AgentHandoff, PillarConversations } from '../store/helixStore';
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:8000';
 
 interface HelixSocketContextType {
   isConnected: boolean;
   sendHitlDecision: (checkpointId: string, decision: string, input?: string, fieldResponses?: Record<string, string>) => void;
-  startPipeline: (pillar: number, input: string, repo?: string) => void;
-  sendUserMessage: (message: string, targetAgent?: string) => void;
+  startPipeline: (pillar: number, input: string, repo?: string, context?: { fromPillar?: number; summary?: string }) => void;
+  sendUserMessage: (message: string, targetAgent?: string, pillar?: number) => void;
   requestClarification: (agent: string, question: string) => void;
+  transitionToPillar: (targetPillar: number, context?: { summary?: string; userIntent?: string }) => void;
 }
 
 const HelixSocketContext = createContext<HelixSocketContextType | undefined>(undefined);
@@ -213,39 +214,57 @@ export function HelixSocketProvider({ children }: { children: ReactNode }): Reac
     }
   }, []);
 
-  const startPipeline = useCallback((pillar: number, input: string, repo?: string) => {
+  const startPipeline = useCallback((pillar: number, input: string, repo?: string, context?: { fromPillar?: number; summary?: string }) => {
     const socket = socketRef.current;
     if (socket && socket.connected) {
-      console.log('Global Socket: Starting pipeline', pillar);
-      storeRef.current.resetPipeline();
+      console.log('Global Socket: Starting pipeline', pillar, context ? 'with context' : '');
+      
+      // Only reset the specific pillar's pipeline, not all
+      storeRef.current.resetPillarPipeline(pillar);
+      storeRef.current.setActivePillar(pillar);
       storeRef.current.setIsProcessing(true);
       
-      // Add user's initial message to conversation
-      storeRef.current.addConversationMessage({
+      // Add user's initial message to pillar-specific conversation
+      storeRef.current.addPillarMessage(pillar, {
         speaker: 'user',
         content: input,
         type: 'message',
       });
       
-      socket.emit('start_pipeline', { pillar, input, repo });
+      // Include context from previous pillar if transitioning
+      socket.emit('start_pipeline', { 
+        pillar, 
+        input, 
+        repo,
+        context: context ? {
+          from_pillar: context.fromPillar,
+          summary: context.summary,
+        } : undefined,
+      });
     } else {
       console.warn('Global Socket: Cannot start pipeline, socket not connected');
     }
   }, []);
 
-  const sendUserMessage = useCallback((message: string, targetAgent?: string) => {
+  const sendUserMessage = useCallback((message: string, targetAgent?: string, pillar?: number) => {
     const socket = socketRef.current;
     if (socket && socket.connected) {
       console.log('Global Socket: Sending user message');
+      const activePillar = pillar || storeRef.current.activePillar || 1;
       
-      storeRef.current.addConversationMessage({
+      // Add to pillar-specific conversation
+      storeRef.current.addPillarMessage(activePillar, {
         speaker: 'user',
         content: message,
         type: 'message',
         metadata: { targetAgent },
       });
       
-      socket.emit('user_message', { message, target_agent: targetAgent });
+      socket.emit('user_message', { 
+        message, 
+        target_agent: targetAgent,
+        pillar: activePillar,
+      });
     } else {
       console.warn('Global Socket: Cannot send message, socket not connected');
     }
@@ -255,8 +274,9 @@ export function HelixSocketProvider({ children }: { children: ReactNode }): Reac
     const socket = socketRef.current;
     if (socket && socket.connected) {
       console.log('Global Socket: Requesting clarification from', agent);
+      const activePillar = storeRef.current.activePillar || 1;
       
-      storeRef.current.addConversationMessage({
+      storeRef.current.addPillarMessage(activePillar, {
         speaker: 'user',
         content: `@${agent}: ${question}`,
         type: 'message',
@@ -269,6 +289,27 @@ export function HelixSocketProvider({ children }: { children: ReactNode }): Reac
     }
   }, []);
 
+  // Intelligent pillar transition with context passing
+  const transitionToPillar = useCallback((targetPillar: number, context?: { summary?: string; userIntent?: string }) => {
+    const socket = socketRef.current;
+    if (socket && socket.connected) {
+      const currentPillar = storeRef.current.activePillar || 1;
+      console.log(`Global Socket: Transitioning from Pillar ${currentPillar} to Pillar ${targetPillar}`);
+      
+      // Use store's transition function to handle context passing
+      storeRef.current.transitionToPillar(targetPillar, context);
+      
+      // Notify backend of pillar transition
+      socket.emit('pillar_transition', {
+        from_pillar: currentPillar,
+        to_pillar: targetPillar,
+        context: context,
+      });
+    } else {
+      console.warn('Global Socket: Cannot transition, socket not connected');
+    }
+  }, []);
+
   return (
     <HelixSocketContext.Provider value={{ 
       isConnected, 
@@ -276,6 +317,7 @@ export function HelixSocketProvider({ children }: { children: ReactNode }): Reac
       startPipeline,
       sendUserMessage,
       requestClarification,
+      transitionToPillar,
     }}>
       {children}
     </HelixSocketContext.Provider>
