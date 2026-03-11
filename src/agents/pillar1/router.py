@@ -29,58 +29,71 @@ from src.core.models import (
 
 logger = logging.getLogger(__name__)
 
-# ── CHANGED: Conversational system prompt ─────────────────────────────────────
+# ── CHANGED: Conversational system prompt with explicit handoffs ───────────────
 ROUTER_SYSTEM_PROMPT = """You are the Router, a sharp and warm team coordinator for Helix.
-Your job is to understand what the user is building, gather context naturally through
-conversation, then hand off to the right specialist agents at the right time.
+Your job is to understand what the user is building, then introduce ONE specialist agent
+at a time, with explicit user consent before each handoff.
 
 ## Your Personality
-- Conversational, calm, and confident — like a brilliant colleague, not a project manager
-- You never dump multiple questions at once. ONE question per message, always
-- You acknowledge what the user just said before moving to the next question
-- You're concise. No filler phrases. No corporate speak. No "Certainly!" or "Great question!"
+- Conversational, calm, and confident — like a brilliant colleague
+- You never dump multiple questions at once. ONE question per message
+- You're concise. No filler phrases. No corporate speak
 - You speak in plain sentences, not bullet points
 
-## How You Gather Information
-Have a real back-and-forth conversation. You need to learn:
-1. What problem they're solving and who it's for (target market)
-2. What stage they're at (idea, prototype, MVP, live)
-3. Who's on the team and what they bring
-4. How much funding they need and what type
-5. Their rough timeline
+## Your Team (introduce ONE at a time)
+- **ARIA** (CTO): Technical feasibility and architecture
+- **FELIX** (CFO): Financial projections, burn rate, runway
+- **NOVA** (CMO): Marketing strategy and positioning
+- **JUDGE** (Investor): Critical evaluation and fundability
 
-But ask these ONE AT A TIME, naturally. React to their answers before asking the next thing.
+## CRITICAL: One Agent at a Time with User Consent
+- You NEVER run all agents automatically
+- Each agent has their own conversation with the user
+- After each agent finishes, YOU come back and ask if user wants the next agent
+- The user controls the pace and can skip agents
 
-Example of good intake:
+## Phase 1: Initial Intake (2-3 questions max)
+Have a brief conversation to understand the idea:
   User: "I want to build an AI scheduling tool for dentists"
-  You: "Interesting — dentists are notoriously underserved by software. Are you targeting
-       solo practices, or bigger multi-location groups?"
-  User: "Solo practices mostly"
-  You: "Got it. Where are you right now — still mapping out the idea, or do you have
-       something built?"
+  You: "Interesting — dentists are underserved by software. Solo practices or bigger groups?"
+  User: "Solo practices"
+  You: "Got it. Are you at the idea stage or do you have something built already?"
 
-Never do this:
-  "Please answer the following: 1) What is your target market? 2) What stage are you at?..."
+## Phase 2: First Handoff (to ARIA)
+Once you have basic context, introduce ARIA:
+  "Okay, I have a good picture. Let me bring in Aria, our CTO — she'll look at the
+   technical side and suggest an architecture. Aria, over to you!"
 
-## When to Hand Off to Agents
-Once you have enough context (usually 4-5 exchanges), transition naturally:
-  "Okay, I have what I need. Let me bring the team in — I'll start with Aria on the
-   technical side, then loop in Felix and the others."
+Then ARIA speaks and has her own conversation with the user.
 
-Then trigger agents in sequence. Always introduce each agent before they speak.
+## Phase 3: Handoff Checkpoints (CRITICAL)
+After ARIA finishes, YOU come back and ask:
+  "Aria's covered the technical angle. Want to hear from Felix next? He's our CFO —
+   he'll break down the costs and funding needs. Or we can skip to Nova for marketing."
 
-## Agent Introductions (use these as templates)
-- ARIA: "Aria's our CTO — she'll assess the technical feasibility and suggest a stack."
-- FELIX: "Felix handles the financial side — burn rate, runway, funding strategy."
-- NOVA: "Nova's our CMO — she'll work on positioning and go-to-market."
-- JUDGE: "Judge plays the skeptical investor — he'll stress-test the idea."
+Wait for user response. If they say yes, introduce Felix:
+  "Great, Felix — take it away!"
+
+After FELIX finishes:
+  "Felix has laid out the financials. Nova's our CMO — she can work on your value
+   proposition and go-to-market. Want her perspective?"
+
+After NOVA finishes:
+  "Last up is Judge — he plays the skeptical investor and will stress-test the idea.
+   Ready for the tough love?"
+
+## Example Handoff Phrases
+- "Want me to bring in [Agent] next?"
+- "Should I pass the baton to [Agent]?"
+- "Ready to hear from [Agent], or would you prefer to skip ahead?"
+- "[Agent] can cover [topic] — interested?"
 
 ## Rules
-- ONE question per message, maximum. This is non-negotiable.
-- Always reflect back what you heard before asking the next thing
-- Keep messages under 3 sentences wherever possible
-- Never use numbered lists, bullet-point question dumps, or intake forms
-- You coordinate — you do not give business advice yourself"""
+- ONE question per message, maximum
+- ALWAYS ask before bringing in the next agent
+- Never auto-run multiple agents in sequence
+- Each agent should have a real back-and-forth, not just dump information
+- You're the host — you introduce, you check in, you facilitate"""
 
 
 class RouterAgent(BaseAgent):
@@ -174,64 +187,246 @@ class RouterAgent(BaseAgent):
             "sections": ["technical", "financial", "marketing", "investor"],
         }
     
+    def _detect_agent_request(self, user_input: str) -> Optional[str]:
+        """
+        Detect if user is requesting a specific agent or wants to move forward.
+        Returns the agent name or 'next' if detected, None otherwise.
+        """
+        text = user_input.lower().strip()
+        
+        # Direct agent mentions
+        if any(x in text for x in ['aria', 'cto', 'technical']):
+            return 'aria'
+        if any(x in text for x in ['felix', 'cfo', 'financial', 'money', 'cost']):
+            return 'felix'
+        if any(x in text for x in ['nova', 'cmo', 'marketing', 'market']):
+            return 'nova'
+        if any(x in text for x in ['judge', 'investor', 'fundability']):
+            return 'judge'
+        
+        # Move forward phrases
+        move_phrases = [
+            'next', 'move on', 'continue', 'proceed', 'go ahead', 'yes', 'sure',
+            'let\'s go', 'bring', 'pass the baton', 'move to', 'skip', 'ready',
+            'ok', 'okay', 'yep', 'yeah', 'sounds good', 'let\'s hear', 'go for it'
+        ]
+        if any(phrase in text for phrase in move_phrases):
+            return 'next'
+        
+        return None
+
     async def execute(self, context: AgentContext) -> AgentResponse:
         """
-        Execute the full Pillar 1 workflow.
+        Execute Pillar 1 workflow with conversational agent handoffs.
+        
+        State machine:
+        - intake: Gathering initial info from user
+        - aria_pending: Asking if user wants to hear from Aria
+        - aria_active: Aria is speaking
+        - felix_pending: Asking if user wants to hear from Felix
+        - felix_active: Felix is speaking
+        - nova_pending: Asking if user wants to hear from Nova
+        - nova_active: Nova is speaking
+        - judge_pending: Asking if user wants to hear from Judge
+        - judge_active: Judge is speaking
+        - complete: All done
         """
-        logger.info(f"ROUTER starting Pillar 1 workflow for: {context.user_input[:100]}...")
+        logger.info(f"ROUTER executing, stage: {context.metadata.get('workflow_stage', 'intake')}")
         
-        # Step 1: Conversational intake (HITL Gate 1.1)
-        # ── CHANGED: now drives one-question-at-a-time conversation ──────────
-        clarification_checkpoint = await self._intake_clarification(context)
-        if clarification_checkpoint and not clarification_checkpoint.is_resolved:
-            return self.format_response(
-                content=clarification_checkpoint.prompt,  # already a single natural question
-                hitl_checkpoint=clarification_checkpoint,
-                metadata={"stage": "intake"},
-            )
+        stage = context.metadata.get("workflow_stage", "intake")
+        user_response = context.metadata.get("last_user_response", "").lower()
         
-        # Step 2: Run all specialist agents
-        agent_outputs = await self._run_specialist_agents(context)
+        # Check if user is requesting to move to a specific agent or next
+        agent_request = self._detect_agent_request(user_response)
         
-        # Step 3: Synthesize the Startup Brief
-        startup_brief = await self._create_startup_brief(context, agent_outputs)
+        # Handle direct agent requests during intake
+        if stage == "intake" and agent_request and agent_request != 'next':
+            # User wants to skip to a specific agent
+            if agent_request == 'aria':
+                context.metadata["workflow_stage"] = "aria_pending"
+                stage = "aria_pending"
+            elif agent_request == 'felix':
+                context.metadata["workflow_stage"] = "felix_pending"
+                stage = "felix_pending"
+            elif agent_request == 'nova':
+                context.metadata["workflow_stage"] = "nova_pending"
+                stage = "nova_pending"
+            elif agent_request == 'judge':
+                context.metadata["workflow_stage"] = "judge_pending"
+                stage = "judge_pending"
         
-        # Step 4: Final approval (HITL Gate 1.3)
-        if context.metadata.get("resolved_gate_1_3"):
-            return self.format_response(
-                content=self._format_startup_brief(startup_brief),
-                metadata={"stage": "complete", "approved": True}
-            )
+        # ═══════════════════════════════════════════════════════════════════════
+        # STAGE: INTAKE - Gather initial info
+        # ═══════════════════════════════════════════════════════════════════════
+        if stage == "intake":
+            clarification_checkpoint = await self._intake_clarification(context)
+            if clarification_checkpoint and not clarification_checkpoint.is_resolved:
+                return self.format_response(
+                    content=clarification_checkpoint.prompt,
+                    hitl_checkpoint=clarification_checkpoint,
+                    metadata={"stage": "intake", "workflow_stage": "intake"},
+                )
+            
+            # Intake complete - offer to bring in Aria
+            context.metadata["workflow_stage"] = "aria_pending"
+            handoff_prompt = """Great, I have a good picture of your idea!
 
-        burn_rate_str = (
-            f"${startup_brief.monthly_burn_rate:,.0f}"
-            if startup_brief.monthly_burn_rate is not None
-            else "TBD"
-        )
+Let me bring in Aria, our CTO — she'll assess the technical feasibility and suggest an architecture.
+
+Ready to hear from Aria?"""
+            
+            checkpoint = self.create_hitl_checkpoint(
+                gate_type=HITLGateType.CLARIFICATION,
+                prompt=handoff_prompt,
+                options=[HITLDecision.APPROVE],
+                metadata={"next_agent": "aria"},
+            )
+            return self.format_response(
+                content=handoff_prompt,
+                hitl_checkpoint=checkpoint,
+                metadata={"workflow_stage": "aria_pending"},
+            )
         
-        final_checkpoint = self.create_hitl_checkpoint(
-            gate_type=HITLGateType.BRIEF_APPROVAL,
-            prompt=self._format_startup_brief(startup_brief),
-            options=[HITLDecision.APPROVE, HITLDecision.EDIT, HITLDecision.REJECT],
-            metadata={"startup_brief": startup_brief.model_dump()},
-        )
+        # ═══════════════════════════════════════════════════════════════════════
+        # STAGE: ARIA
+        # ═══════════════════════════════════════════════════════════════════════
+        elif stage == "aria_pending":
+            # User approved - run Aria
+            context.metadata["workflow_stage"] = "aria_active"
+            logger.info("Running ARIA (CTO) analysis...")
+            
+            aria_response = await self.call_agent(self.aria, context)
+            context.metadata["aria_analysis"] = aria_response.content
+            
+            # After Aria, offer Felix
+            context.metadata["workflow_stage"] = "felix_pending"
+            handoff_prompt = f"""{aria_response.content}
+
+---
+
+That's my technical take. Want me to pass the baton to Felix? He's our CFO — he'll break down the costs, burn rate, and funding strategy."""
+            
+            checkpoint = self.create_hitl_checkpoint(
+                gate_type=HITLGateType.CLARIFICATION,
+                prompt=handoff_prompt,
+                options=[HITLDecision.APPROVE],
+                metadata={"next_agent": "felix"},
+            )
+            return self.format_response(
+                content=handoff_prompt,
+                hitl_checkpoint=checkpoint,
+                metadata={"workflow_stage": "felix_pending"},
+            )
         
-        context.session_state.startup_brief = startup_brief
+        # ═══════════════════════════════════════════════════════════════════════
+        # STAGE: FELIX
+        # ═══════════════════════════════════════════════════════════════════════
+        elif stage == "felix_pending":
+            context.metadata["workflow_stage"] = "felix_active"
+            logger.info("Running FELIX (CFO) analysis...")
+            
+            felix_response = await self.call_agent(self.felix, context)
+            context.metadata["felix_analysis"] = felix_response.content
+            
+            # After Felix, offer Nova
+            context.metadata["workflow_stage"] = "nova_pending"
+            handoff_prompt = f"""{felix_response.content}
+
+---
+
+That's the financial picture. Want me to bring in Nova? She's our CMO — she'll work on your value proposition and go-to-market strategy."""
+            
+            checkpoint = self.create_hitl_checkpoint(
+                gate_type=HITLGateType.CLARIFICATION,
+                prompt=handoff_prompt,
+                options=[HITLDecision.APPROVE],
+                metadata={"next_agent": "nova"},
+            )
+            return self.format_response(
+                content=handoff_prompt,
+                hitl_checkpoint=checkpoint,
+                metadata={"workflow_stage": "nova_pending"},
+            )
         
-        return self.format_response(
-            content=self._format_startup_brief(startup_brief),
-            hitl_checkpoint=final_checkpoint,
-            metadata={
-                "stage": "complete",
-                "startup_brief_id": str(startup_brief.id),
-                "agent_outputs": {
-                    "aria": agent_outputs.get("aria", {}).get("content", ""),
-                    "felix": agent_outputs.get("felix", {}).get("content", ""),
-                    "nova": agent_outputs.get("nova", {}).get("content", ""),
-                    "judge": agent_outputs.get("judge", {}).get("content", ""),
-                },
-            },
-        )
+        # ═══════════════════════════════════════════════════════════════════════
+        # STAGE: NOVA
+        # ═══════════════════════════════════════════════════════════════════════
+        elif stage == "nova_pending":
+            context.metadata["workflow_stage"] = "nova_active"
+            logger.info("Running NOVA (CMO) analysis...")
+            
+            nova_response = await self.call_agent(self.nova, context)
+            context.metadata["nova_analysis"] = nova_response.content
+            
+            # After Nova, offer Judge
+            context.metadata["workflow_stage"] = "judge_pending"
+            handoff_prompt = f"""{nova_response.content}
+
+---
+
+That's the marketing angle. Last up is Judge — he plays the skeptical investor and will stress-test the whole idea. Ready for the tough love?"""
+            
+            checkpoint = self.create_hitl_checkpoint(
+                gate_type=HITLGateType.CLARIFICATION,
+                prompt=handoff_prompt,
+                options=[HITLDecision.APPROVE],
+                metadata={"next_agent": "judge"},
+            )
+            return self.format_response(
+                content=handoff_prompt,
+                hitl_checkpoint=checkpoint,
+                metadata={"workflow_stage": "judge_pending"},
+            )
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # STAGE: JUDGE
+        # ═══════════════════════════════════════════════════════════════════════
+        elif stage == "judge_pending":
+            context.metadata["workflow_stage"] = "judge_active"
+            logger.info("Running JUDGE (Investor) evaluation...")
+            
+            judge_response = await self.call_agent(self.judge, context)
+            context.metadata["judge_analysis"] = judge_response.content
+            
+            # After Judge, wrap up
+            context.metadata["workflow_stage"] = "complete"
+            wrap_up = f"""{judge_response.content}
+
+---
+
+**That's the full team's perspective!**
+
+You've heard from:
+- **Aria** (CTO) on technical feasibility
+- **Felix** (CFO) on financials and runway
+- **Nova** (CMO) on marketing and positioning
+- **Judge** (Investor) on fundability
+
+What would you like to do next? You can:
+- Ask follow-up questions to any of us
+- Move to **Pillar 2** to start building
+- Save this analysis for later"""
+            
+            checkpoint = self.create_hitl_checkpoint(
+                gate_type=HITLGateType.BRIEF_APPROVAL,
+                prompt=wrap_up,
+                options=[HITLDecision.APPROVE, HITLDecision.EDIT],
+                metadata={"stage": "complete"},
+            )
+            return self.format_response(
+                content=wrap_up,
+                hitl_checkpoint=checkpoint,
+                metadata={"workflow_stage": "complete", "workflow_complete": True},
+            )
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # STAGE: COMPLETE
+        # ═══════════════════════════════════════════════════════════════════════
+        else:
+            return self.format_response(
+                content="The analysis is complete. Let me know if you have any questions!",
+                metadata={"workflow_stage": "complete", "workflow_complete": True},
+            )
     
     async def _intake_clarification(self, context: AgentContext) -> Optional[HITLCheckpoint]:
         """

@@ -4,7 +4,6 @@ import { useState, useRef, useEffect } from 'react';
 import { 
   Send, 
   Plus,
-  ChevronRight,
   Sparkles,
   TrendingUp,
   DollarSign,
@@ -20,7 +19,7 @@ import {
   ArrowUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { ConversationMessage, HitlCheckpoint, useHelixStore } from '@/store/helixStore';
+import { ConversationMessage, useHelixStore } from '@/store/helixStore';
 import { useHelixSocket } from '@/hooks/useHelixSocket';
 import ReactMarkdown from 'react-markdown';
 
@@ -67,8 +66,6 @@ function AgentMessage({
   speaker: string;
   content: string;
 }) {
-  const agent = agentAvatars[speaker.toUpperCase()];
-  
   return (
     <div className="mb-6">
       {/* Message content - clean text like Claude.ai */}
@@ -82,90 +79,6 @@ function AgentMessage({
         prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline
       ">
         <ReactMarkdown>{content}</ReactMarkdown>
-      </div>
-    </div>
-  );
-}
-
-// HITL Checkpoint - inline question style like Claude
-function HitlCheckpointInline({ 
-  checkpoint,
-  onSubmit,
-}: { 
-  checkpoint: HitlCheckpoint;
-  onSubmit: (decision: string, input: string) => void;
-}) {
-  const [input, setInput] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-  
-  const handleSubmit = () => {
-    if (input.trim()) {
-      setIsSubmitting(true);
-      onSubmit('approve', input.trim());
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
-
-  return (
-    <div className="mb-6">
-      {/* Question content - same style as agent message */}
-      <div className="text-slate-200 text-[15px] leading-[1.7] prose prose-invert prose-sm max-w-none mb-4
-        prose-p:my-3 prose-p:leading-[1.7]
-        prose-strong:text-slate-100
-      ">
-        <ReactMarkdown>{checkpoint.prompt}</ReactMarkdown>
-      </div>
-      
-      {/* Suggestions as quick replies */}
-      {checkpoint.suggestions && checkpoint.suggestions.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-4">
-          {checkpoint.suggestions.map((s, i) => (
-            <button
-              key={i}
-              onClick={() => setInput(s)}
-              className="text-sm px-3 py-1.5 rounded-full border border-[#444] text-slate-400 hover:text-white hover:border-[#666] hover:bg-[#333] transition-all"
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
-      
-      {/* Inline input - minimal style */}
-      <div className="flex items-center gap-3">
-        <input
-          ref={inputRef}
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Type your response..."
-          disabled={isSubmitting}
-          className="flex-1 bg-transparent border-b border-[#444] focus:border-[#666] px-0 py-2 text-[15px] text-slate-200 placeholder:text-slate-600 outline-none disabled:opacity-50 transition-colors"
-        />
-        <button
-          onClick={handleSubmit}
-          disabled={!input.trim() || isSubmitting}
-          className={cn(
-            "p-2 rounded-full transition-all",
-            input.trim() && !isSubmitting
-              ? "bg-white text-black hover:bg-slate-200"
-              : "bg-[#333] text-slate-600 cursor-not-allowed"
-          )}
-        >
-          <ArrowUp className="w-4 h-4" />
-        </button>
       </div>
     </div>
   );
@@ -203,14 +116,12 @@ export default function ChatInterface({
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isProcessing, latestCheckpoint]);
+  }, [messages, isProcessing]);
 
   // Auto-focus input
   useEffect(() => {
-    if (!latestCheckpoint) {
-      inputRef.current?.focus();
-    }
-  }, [latestCheckpoint]);
+    inputRef.current?.focus();
+  }, []);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -222,6 +133,10 @@ export default function ChatInterface({
 
   const handleSend = () => {
     if (input.trim() && !isProcessing) {
+      // If there's a pending checkpoint, resolve it with the user's input
+      if (latestCheckpoint) {
+        sendHitlDecision(latestCheckpoint.id, 'approve', input.trim());
+      }
       onSendMessage(input.trim());
       setInput('');
       if (inputRef.current) {
@@ -237,12 +152,6 @@ export default function ChatInterface({
     }
   };
 
-  const handleCheckpointSubmit = (decision: string, userInput: string) => {
-    if (latestCheckpoint) {
-      sendHitlDecision(latestCheckpoint.id, decision, userInput);
-    }
-  };
-
   const agent = activeAgent ? agentAvatars[activeAgent.toUpperCase()] : null;
 
   return (
@@ -250,7 +159,7 @@ export default function ChatInterface({
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-[48rem] mx-auto px-4 py-6">
-          {messages.length === 0 && !latestCheckpoint ? (
+          {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
               <h1 className="text-2xl font-normal text-slate-200 mb-2">
                 {pillar === 1 && "What startup idea can I help you analyze?"}
@@ -278,16 +187,8 @@ export default function ChatInterface({
                 </div>
               ))}
               
-              {/* Show HITL checkpoint if pending */}
-              {latestCheckpoint && (
-                <HitlCheckpointInline 
-                  checkpoint={latestCheckpoint}
-                  onSubmit={handleCheckpointSubmit}
-                />
-              )}
-              
               {/* Typing indicator */}
-              {isProcessing && activeAgent && agent && !latestCheckpoint && (
+              {isProcessing && activeAgent && agent && (
                 <TypingIndicator agentName={agent.name} />
               )}
             </>
@@ -295,6 +196,26 @@ export default function ChatInterface({
           <div ref={messagesEndRef} />
         </div>
       </div>
+
+      {/* Suggestions - show when there's a checkpoint with suggestions */}
+      {latestCheckpoint?.suggestions && latestCheckpoint.suggestions.length > 0 && !isProcessing && (
+        <div className="border-t border-[#333] bg-[#212121] px-4 py-3">
+          <div className="max-w-[48rem] mx-auto flex flex-wrap gap-2">
+            {latestCheckpoint.suggestions.map((suggestion, i) => (
+              <button
+                key={i}
+                onClick={() => {
+                  setInput(suggestion);
+                  inputRef.current?.focus();
+                }}
+                className="text-sm px-4 py-2 rounded-full border border-[#444] text-slate-400 hover:text-white hover:border-[#666] hover:bg-[#333] transition-all"
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Input Area - Claude.ai style */}
       <div className="border-t border-[#333] bg-[#212121]">
@@ -315,7 +236,7 @@ export default function ChatInterface({
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
-              disabled={isProcessing && !latestCheckpoint}
+              disabled={isProcessing}
               rows={1}
               className="flex-1 bg-transparent py-3 text-[15px] text-slate-200 placeholder:text-slate-500 resize-none outline-none max-h-[200px] disabled:opacity-50"
             />
@@ -323,10 +244,10 @@ export default function ChatInterface({
             {/* Send button */}
             <button
               onClick={handleSend}
-              disabled={!input.trim() || (isProcessing && !latestCheckpoint)}
+              disabled={!input.trim() || isProcessing}
               className={cn(
                 "m-2 p-2 rounded-full transition-all",
-                input.trim() && !(isProcessing && !latestCheckpoint)
+                input.trim() && !isProcessing
                   ? "bg-white text-black hover:bg-slate-200"
                   : "bg-[#444] text-slate-600 cursor-not-allowed"
               )}

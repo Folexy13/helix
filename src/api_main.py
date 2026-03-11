@@ -470,37 +470,52 @@ async def emit_smart_checkpoint(sid: str, checkpoint, orchestrator: IntelligentO
         handler.register_checkpoint(str(checkpoint.id), checkpoint)
         logger.info(f"emit_smart_checkpoint: Registered checkpoint {checkpoint.id} with handler")
     
-    # Generate smart suggestions based on context
+    # Generate dynamic suggestions based on the checkpoint context and conversation
     suggestions = []
-    if checkpoint.gate_type == HITLGateType.IDEA_CLARIFICATION:
-        suggestions = [
-            "Focus on B2B SaaS market",
-            "Target enterprise customers",
-            "Start with MVP approach",
-            "Consider freemium model",
-        ]
-    elif checkpoint.gate_type == HITLGateType.SPEC_APPROVAL:
-        suggestions = [
-            "Add more acceptance criteria",
-            "Break down into smaller tasks",
-            "Request complexity estimates",
-        ]
+    prompt_lower = checkpoint.prompt.lower() if checkpoint.prompt else ""
     
-    # Parse questions from prompt if present
-    questions = []
-    prompt_lines = checkpoint.prompt.split('\n')
-    for i, line in enumerate(prompt_lines):
-        if line.strip().startswith('-'):
-            questions.append({
-                "id": f"q_{i}",
-                "text": line.strip()[1:].strip(),
-                "type": "text",
-                "required": True,
-                "placeholder": "Your answer...",
-            })
+    # Get recent conversation for context
+    recent_context = ""
+    if orchestrator and orchestrator.conversation_history:
+        recent_context = " ".join([t.content.lower() for t in orchestrator.conversation_history[-3:]])
+    
+    # Suggest based on what's being asked - always 4 suggestions
+    if "aria" in prompt_lower or "technical" in prompt_lower or "cto" in prompt_lower:
+        suggestions = ["Yes, let's hear from Aria", "Skip to Felix (CFO)", "Skip to Nova (CMO)", "I have a question first"]
+    elif "felix" in prompt_lower or "financial" in prompt_lower or "cfo" in prompt_lower:
+        suggestions = ["Yes, bring in Felix", "Skip to Nova (CMO)", "Skip to Judge", "Go back to Aria"]
+    elif "nova" in prompt_lower or "marketing" in prompt_lower or "cmo" in prompt_lower:
+        suggestions = ["Yes, let's hear from Nova", "Skip to Judge", "Go back to Felix", "I have questions"]
+    elif "judge" in prompt_lower or "investor" in prompt_lower:
+        suggestions = ["Yes, give me the tough love", "I'm ready for feedback", "Go back to Nova", "Let me think about it"]
+    elif "restaurant" in recent_context or "food" in recent_context:
+        suggestions = ["Restaurant owners", "Food delivery services", "Diners/customers", "Move to next agent"]
+    elif "saas" in recent_context or "software" in recent_context:
+        suggestions = ["Small businesses", "Enterprise companies", "Startups", "Move to next agent"]
+    elif "target" in prompt_lower or "audience" in prompt_lower or "who" in prompt_lower:
+        suggestions = ["Small businesses", "Enterprise companies", "Consumers", "Move to next agent"]
+    elif "problem" in prompt_lower or "solving" in prompt_lower:
+        suggestions = ["Efficiency & automation", "Cost reduction", "Better user experience", "Move to next agent"]
+    elif "stage" in prompt_lower or "far along" in prompt_lower:
+        suggestions = ["Just an idea", "Have a prototype", "MVP ready", "Already launched"]
+    elif "team" in prompt_lower or "building" in prompt_lower:
+        suggestions = ["Solo founder", "Small team (2-3)", "Full team (4+)", "Looking for co-founders"]
+    elif "funding" in prompt_lower or "capital" in prompt_lower:
+        suggestions = ["Bootstrapping", "Pre-seed ($50-250k)", "Seed ($500k-2M)", "Series A ($2M+)"]
+    else:
+        # Default suggestions
+        suggestions = ["Tell me more", "Move to next agent", "Let's continue", "I have a question"]
     
     # Get conversation context
     context_summary = orchestrator._generate_context_summary() if orchestrator else ""
+    
+    # Turn off processing indicator when emitting checkpoint
+    await sio.emit('pipeline_update', {
+        'current_stage': 'waiting_for_input',
+        'active_agent': checkpoint.agent.value.upper(),
+        'progress_percent': 50,
+        'stage_description': 'Waiting for your response...',
+    }, to=sid)
     
     await sio.emit('hitl_checkpoint', {
         'id': str(checkpoint.id),
@@ -510,7 +525,7 @@ async def emit_smart_checkpoint(sid: str, checkpoint, orchestrator: IntelligentO
         'prompt': checkpoint.prompt,
         'options': [opt.value for opt in checkpoint.options],
         # Enhanced fields
-        'questions': questions,
+        'questions': [],  # No parsed questions - use natural conversation
         'suggestions': suggestions,
         'context_summary': context_summary,
         'conversation_history': [
@@ -697,13 +712,18 @@ Which would you prefer?"""
 
 
 async def run_pillar1_workflow(
-    sid: str, 
-    session_state: SessionState, 
-    hitl_handler: APIHITLHandler, 
+    sid: str,
+    session_state: SessionState,
+    hitl_handler: APIHITLHandler,
     orchestrator: IntelligentOrchestrator,
     user_input: str
 ):
-    """Executes Pillar 1 with intelligent orchestration."""
+    """
+    Executes Pillar 1 with conversational agent handoffs.
+    
+    Each agent has a full conversation with the user, and the user must
+    approve before moving to the next agent. No automatic agent chaining.
+    """
     router = RouterAgent()
     
     # Add initial user input to conversation
@@ -715,103 +735,95 @@ async def run_pillar1_workflow(
         user_input=user_input,
     )
     
-    await stream_agent_log(sid, 'ROUTER', f'Initializing Founding Team for idea: {user_input}', 'action')
     await sio.emit('pipeline_update', {
         'current_stage': 'intake',
         'active_agent': 'ROUTER',
         'progress_percent': 10,
-        'stage_description': 'Gathering initial information about your idea',
+        'stage_description': 'Starting conversation',
     }, to=sid)
 
     try:
-        # Step 1: Initial execution (Clarification)
-        await stream_typing_indicator(sid, 'ROUTER', True)
-        await stream_agent_log(sid, 'ROUTER', 'Analyzing your idea and preparing clarifying questions...', 'thought')
-        
-        response = await router.execute(context)
-        await stream_typing_indicator(sid, 'ROUTER', False)
-        
-        # Add agent response to conversation
-        orchestrator.add_conversation_turn("router", response.content)
-        
+        # Conversational loop - Router manages the flow
         iteration = 0
-        max_iterations = 10
+        max_iterations = 50  # Allow many back-and-forth exchanges
         
-        while response.hitl_checkpoint and not response.hitl_checkpoint.is_resolved and iteration < max_iterations:
+        while iteration < max_iterations:
             iteration += 1
-            checkpoint = response.hitl_checkpoint
             
-            # Emit enhanced checkpoint
-            await emit_smart_checkpoint(sid, checkpoint, orchestrator)
+            # Determine which agent is active based on workflow stage
+            workflow_stage = context.metadata.get("workflow_stage", "intake")
+            active_agent = "ROUTER"
+            if "aria" in workflow_stage:
+                active_agent = "ARIA"
+            elif "felix" in workflow_stage:
+                active_agent = "FELIX"
+            elif "nova" in workflow_stage:
+                active_agent = "NOVA"
+            elif "judge" in workflow_stage:
+                active_agent = "JUDGE"
             
-            # Wait for user decision - this BLOCKS until user responds
-            decision = await hitl_handler.present_checkpoint(checkpoint)
+            # Execute router (which may delegate to specialists)
+            await stream_typing_indicator(sid, active_agent, True)
+            response = await router.execute(context)
+            await stream_typing_indicator(sid, active_agent, False)
             
-            # Get user input from handler (stored before cleanup)
-            user_response = hitl_handler.get_last_user_input()
+            # Determine the speaker for the response
+            response_stage = context.metadata.get("workflow_stage", "intake")
+            speaker = "ROUTER"
+            if "aria_active" in response_stage or "felix_pending" in response_stage:
+                speaker = "ARIA"
+            elif "felix_active" in response_stage or "nova_pending" in response_stage:
+                speaker = "FELIX"
+            elif "nova_active" in response_stage or "judge_pending" in response_stage:
+                speaker = "NOVA"
+            elif "judge_active" in response_stage or "complete" in response_stage:
+                speaker = "JUDGE"
             
-            # Add to conversation
-            orchestrator.add_conversation_turn("user", user_response or f"Decision: {decision.value}")
+            # Stream the response
+            if response.content:
+                await stream_agent_log(sid, speaker, response.content, 'result')
+                orchestrator.add_conversation_turn(speaker.lower(), response.content)
             
-            # Record in context
-            context.metadata[f"resolved_{checkpoint.gate_type.value}"] = True
-            
-            if checkpoint.gate_type.value == "gate_1_1":
-                context.metadata["clarification_complete"] = True
-                context.metadata["user_clarifications"] = user_response
-            
-            # Update pipeline with agent progression
+            # Update pipeline with current agent
             await sio.emit('pipeline_update', {
-                'current_stage': 'analyzing',
-                'active_agent': 'ROUTER',
-                'progress_percent': 30,
-                'stage_description': 'Coordinating specialist analysis',
+                'current_stage': response_stage,
+                'active_agent': speaker,
+                'progress_percent': min(20 + iteration * 10, 95),
+                'stage_description': f'{speaker} is speaking...',
             }, to=sid)
             
-            # Show handoffs to specialists
-            specialists = [
-                ('ARIA', 'Evaluating technical architecture and complexity...', 40),
-                ('FELIX', 'Projecting financial requirements and runway...', 55),
-                ('NOVA', 'Crafting value proposition and go-to-market strategy...', 70),
-                ('JUDGE', 'Conducting investor-style evaluation...', 85),
-            ]
-            
-            for agent_name, thought, progress in specialists:
-                await stream_typing_indicator(sid, agent_name, True)
-                await stream_agent_log(sid, agent_name, thought, 'thought')
+            # Check if there's a checkpoint (question for user)
+            if response.hitl_checkpoint and not response.hitl_checkpoint.is_resolved:
+                checkpoint = response.hitl_checkpoint
                 
-                # Record handoff
-                orchestrator.record_handoff(AgentHandoff(
-                    from_agent=AgentRole.ROUTER,
-                    to_agent=AgentRole(agent_name.lower()),
-                    reason=HandoffReason.TASK_COMPLETE,
-                    context={"stage": "analysis"},
-                ))
+                # Emit checkpoint for user to respond
+                await emit_smart_checkpoint(sid, checkpoint, orchestrator)
                 
-                await asyncio.sleep(0.5)  # Brief pause for UI effect
-                await stream_typing_indicator(sid, agent_name, False)
+                # Wait for user response
+                decision = await hitl_handler.present_checkpoint(checkpoint)
+                user_response = hitl_handler.get_last_user_input()
                 
-                await sio.emit('pipeline_update', {
-                    'current_stage': 'analyzing',
-                    'active_agent': agent_name,
-                    'progress_percent': progress,
-                    'stage_description': f'{agent_name} is analyzing...',
-                }, to=sid)
-            
-            response = await router.execute(context)
-            orchestrator.add_conversation_turn("router", response.content)
+                # Add user response to context
+                orchestrator.add_conversation_turn("user", user_response or f"Decision: {decision.value}")
+                context.user_input = user_response or ""
+                context.metadata["last_user_response"] = user_response
+                
+            elif response.metadata.get("workflow_complete"):
+                # Router signals workflow is done
+                break
+            else:
+                # No checkpoint and not complete - wait for more user input
+                break
         
         # Final completion
         await sio.emit('pipeline_update', {
             'current_stage': 'complete',
             'active_agent': None,
             'progress_percent': 100,
-            'stage_description': 'Analysis complete!',
+            'stage_description': 'Conversation complete!',
         }, to=sid)
         
-        await stream_agent_log(sid, 'ROUTER', response.content, 'result')
-        
-        # Emit smart next-steps checkpoint
+        # Emit next-steps checkpoint
         await emit_next_steps_checkpoint(sid, orchestrator, pillar=1, brief_summary={
             'idea': user_input[:100],
             'feasibility_score': response.metadata.get('feasibility_score', 'N/A'),

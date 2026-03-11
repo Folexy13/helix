@@ -359,12 +359,13 @@ export const useHelixStore = create<HelixState>((set, get) => ({
   activeAgent: null,
   pipelineProgress: 0,
   isProcessing: false,
-  setPipelineUpdate: (stage, agent, progress, description = '') => set({ 
-    currentStage: stage, 
-    activeAgent: agent, 
+  setPipelineUpdate: (stage, agent, progress, description = '') => set({
+    currentStage: stage,
+    activeAgent: agent,
     pipelineProgress: progress,
     stageDescription: description,
-    isProcessing: stage !== 'complete' && stage !== 'idle'
+    // Not processing when complete, idle, or waiting for user input
+    isProcessing: stage !== 'complete' && stage !== 'idle' && stage !== 'waiting_for_input'
   }),
   setIsProcessing: (processing) => set({ isProcessing: processing }),
   resetPipeline: () => set({ 
