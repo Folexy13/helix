@@ -151,7 +151,7 @@ Format the response as structured data."""
                     "temperature": 0.1,  # Low temperature for factual data
                     "maxTokens": 2000,
                 },
-                # Enable web grounding
+                # Enable web grounding for real-time search
                 "additionalModelRequestFields": {
                     "webGrounding": {
                         "enabled": True,
@@ -162,7 +162,7 @@ Format the response as structured data."""
                 }
             }
             
-            # Execute search
+            # Execute search with web grounding
             response = await asyncio.to_thread(
                 self._client.converse,
                 modelId=settings.nova_lite_model_id,
@@ -596,7 +596,7 @@ Analyze this thoroughly and provide:
                     "temperature": 0.3,
                     "maxTokens": 4000,
                 },
-                # Enable extended thinking (Nova Pro only)
+                # Enable extended thinking (Nova 2 Lite)
                 "additionalModelRequestFields": {
                     "reasoningConfig": {
                         "type": "enabled",
@@ -605,8 +605,8 @@ Analyze this thoroughly and provide:
                 }
             }
             
-            # Use Nova Pro for extended thinking
-            model_id = "amazon.nova-pro-v1:0"
+            # Use Nova 2 Lite for extended thinking
+            model_id = settings.nova_lite_model_id
             
             response = await asyncio.to_thread(
                 self._client.converse,

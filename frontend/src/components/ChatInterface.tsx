@@ -17,6 +17,9 @@ import {
   Search,
   Zap,
   ArrowUp,
+  Mic,
+  MicOff,
+  Volume2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ConversationMessage, useHelixStore } from '@/store/helixStore';
@@ -102,12 +105,97 @@ export default function ChatInterface({
   pillar = 1,
 }: ChatInterfaceProps) {
   const [input, setInput] = useState('');
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+  const synthesisRef = useRef<SpeechSynthesisUtterance | null>(null);
   
   // Get pending checkpoints from store
   const { pendingCheckpoints } = useHelixStore();
   const { sendHitlDecision } = useHelixSocket();
+  
+  // Initialize speech recognition
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const windowAny = window as any;
+    if (typeof window !== 'undefined' && (windowAny.SpeechRecognition || windowAny.webkitSpeechRecognition)) {
+      const SpeechRecognitionClass = windowAny.SpeechRecognition || windowAny.webkitSpeechRecognition;
+      recognitionRef.current = new SpeechRecognitionClass();
+      recognitionRef.current.continuous = false;
+      recognitionRef.current.interimResults = true;
+      recognitionRef.current.lang = 'en-US';
+      
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      recognitionRef.current.onresult = (event: any) => {
+        const transcript = Array.from(event.results)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((result: any) => result[0].transcript)
+          .join('');
+        setInput(transcript);
+      };
+      
+      recognitionRef.current.onend = () => {
+        setIsListening(false);
+      };
+      
+      recognitionRef.current.onerror = () => {
+        setIsListening(false);
+      };
+    }
+    
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+      }
+    };
+  }, []);
+  
+  // Toggle voice input
+  const toggleVoiceInput = () => {
+    if (!recognitionRef.current) {
+      alert('Speech recognition is not supported in your browser');
+      return;
+    }
+    
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    } else {
+      recognitionRef.current.start();
+      setIsListening(true);
+    }
+  };
+  
+  // Speak agent response (TTS)
+  const speakResponse = (text: string) => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      // Cancel any ongoing speech
+      window.speechSynthesis.cancel();
+      
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      
+      utterance.onstart = () => setIsSpeaking(true);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+      
+      synthesisRef.current = utterance;
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+  
+  // Auto-speak new agent messages
+  useEffect(() => {
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage && lastMessage.speaker !== 'user' && !isProcessing) {
+      // Optionally auto-speak - uncomment to enable
+      // speakResponse(lastMessage.content);
+    }
+  }, [messages, isProcessing]);
   
   // Filter checkpoints for current pillar
   const pillarCheckpoints = pendingCheckpoints.filter(cp => cp.pillar === pillar);
@@ -133,11 +221,18 @@ export default function ChatInterface({
 
   const handleSend = () => {
     if (input.trim() && !isProcessing) {
+      const trimmedInput = input.trim();
+      
       // If there's a pending checkpoint, resolve it with the user's input
+      // This will add the message to conversation, so don't call onSendMessage
       if (latestCheckpoint) {
-        sendHitlDecision(latestCheckpoint.id, 'approve', input.trim());
+        sendHitlDecision(latestCheckpoint.id, 'approve', trimmedInput);
+      } else {
+        // Only call onSendMessage if there's no checkpoint
+        // This prevents duplicate messages
+        onSendMessage(trimmedInput);
       }
-      onSendMessage(input.trim());
+      
       setInput('');
       if (inputRef.current) {
         inputRef.current.style.height = 'auto';
@@ -198,10 +293,10 @@ export default function ChatInterface({
       </div>
 
       {/* Suggestions - show when there's a checkpoint with suggestions */}
-      {latestCheckpoint?.suggestions && latestCheckpoint.suggestions.length > 0 && !isProcessing && (
+      {latestCheckpoint?.metadata?.suggestions && latestCheckpoint.metadata.suggestions.length > 0 && !isProcessing && (
         <div className="border-t border-[#333] bg-[#212121] px-4 py-3">
           <div className="max-w-[48rem] mx-auto flex flex-wrap gap-2">
-            {latestCheckpoint.suggestions.map((suggestion, i) => (
+            {latestCheckpoint.metadata.suggestions.map((suggestion: string, i: number) => (
               <button
                 key={i}
                 onClick={() => {
@@ -235,11 +330,48 @@ export default function ChatInterface({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={placeholder}
+              placeholder={isListening ? "Listening..." : placeholder}
               disabled={isProcessing}
               rows={1}
               className="flex-1 bg-transparent py-3 text-[15px] text-slate-200 placeholder:text-slate-500 resize-none outline-none max-h-[200px] disabled:opacity-50"
             />
+
+            {/* Microphone button */}
+            <button
+              onClick={toggleVoiceInput}
+              disabled={isProcessing}
+              className={cn(
+                "p-2 rounded-full transition-all mr-1",
+                isListening
+                  ? "bg-red-500 text-white animate-pulse"
+                  : "text-slate-400 hover:text-slate-300 hover:bg-[#3a3a3a]"
+              )}
+              title={isListening ? "Stop listening" : "Voice input"}
+            >
+              {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+
+            {/* Speaker button - to hear last response */}
+            {messages.length > 0 && messages[messages.length - 1]?.speaker !== 'user' && (
+              <button
+                onClick={() => {
+                  const lastAgentMessage = messages.filter(m => m.speaker !== 'user').pop();
+                  if (lastAgentMessage) {
+                    speakResponse(lastAgentMessage.content);
+                  }
+                }}
+                disabled={isSpeaking}
+                className={cn(
+                  "p-2 rounded-full transition-all mr-1",
+                  isSpeaking
+                    ? "bg-blue-500 text-white animate-pulse"
+                    : "text-slate-400 hover:text-slate-300 hover:bg-[#3a3a3a]"
+                )}
+                title={isSpeaking ? "Speaking..." : "Listen to response"}
+              >
+                <Volume2 className="w-4 h-4" />
+              </button>
+            )}
 
             {/* Send button */}
             <button

@@ -366,6 +366,7 @@ def status():
     
     console.print(f"  AWS Region: {settings.aws_region}")
     console.print(f"  Nova Lite Model: {settings.nova_lite_model_id}")
+    console.print(f"  Nova Pro Model: {settings.nova_pro_model_id}")
     console.print(f"  Nova Sonic Model: {settings.nova_sonic_model_id}")
     console.print(f"  Nova Embeddings: {settings.nova_embeddings_model_id}")
     console.print(f"  Environment: {settings.environment.value}")

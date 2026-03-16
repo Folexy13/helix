@@ -192,8 +192,10 @@ export function HelixSocketProvider({ children }: { children: ReactNode }): Reac
     if (socket && socket.connected) {
       console.log('Global Socket: Sending HITL decision', decision);
       
-      // Add user's decision to conversation
-      storeRef.current.addConversationMessage({
+      const activePillar = storeRef.current.activePillar || 1;
+      
+      // Add user's decision to pillar-specific conversation
+      storeRef.current.addPillarMessage(activePillar, {
         speaker: 'user',
         content: input || `Decision: ${decision}`,
         type: 'message',

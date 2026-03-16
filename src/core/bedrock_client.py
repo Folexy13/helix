@@ -121,16 +121,9 @@ class BedrockClient:
         if system_prompt:
             request_body["system"] = [{"text": system_prompt}]
         
-        # Add extended thinking if specified
-        # Note: Extended thinking is only supported on Nova Pro models
-        # Disabled for now as Nova Lite doesn't support it
-        # if reasoning_effort and "nova-pro" in model_id:
-        #     request_body["additionalModelRequestFields"] = {
-        #         "reasoningConfig": {
-        #             "type": "enabled",
-        #             "maxReasoningEffort": reasoning_effort.value,
-        #         }
-        #     }
+        # NOTE: Extended thinking/reasoning is not currently supported via additionalModelRequestFields
+        # for Nova models in the Converse API. The reasoning_effort parameter is accepted but not used.
+        # Future versions may support this feature.
         
         # Add tools if specified
         if tools:
@@ -217,13 +210,8 @@ class BedrockClient:
         if system_prompt:
             request_body["system"] = [{"text": system_prompt}]
         
-        if reasoning_effort:
-            request_body["additionalModelRequestFields"] = {
-                "reasoningConfig": {
-                    "type": "enabled",
-                    "maxReasoningEffort": reasoning_effort.value,
-                }
-            }
+        # NOTE: Extended thinking/reasoning is not currently supported via additionalModelRequestFields
+        # for Nova models in the Converse API. The reasoning_effort parameter is accepted but not used.
         
         try:
             response = self._client.converse_stream(
@@ -314,13 +302,13 @@ class BedrockClient:
         tools: List[Dict[str, Any]],
         system_prompt: Optional[str] = None,
         messages: Optional[List[Dict[str, str]]] = None,
-        model_id: str = NovaModel.NOVA_LITE.value,
+        model_id: str = NovaModel.NOVA_PRO.value,
         reasoning_effort: Optional[ReasoningEffort] = None,
     ) -> Dict[str, Any]:
         """
         Invoke model with tool use capability.
         
-        Used for agent-to-agent communication and external tool calls.
+        Uses Nova Pro by default for better reasoning in tool-use scenarios.
         """
         return await self.generate_text(
             prompt=prompt,

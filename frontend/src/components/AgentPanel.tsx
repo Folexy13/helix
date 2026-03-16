@@ -208,11 +208,15 @@ export default function AgentPanel({
                   "rounded-xl transition-all duration-300",
                   isCollapsed ? "p-2" : "p-3",
                   isActive 
-                    ? "bg-[#2a2a2a] border border-[#3a3a3a] shadow-lg" 
+                    ? "bg-[#2a2a2a] border-2 shadow-lg" 
                     : isComplete
                     ? "bg-emerald-500/5 border border-emerald-500/20"
                     : "bg-[#222] border border-transparent hover:border-[#3a3a3a]"
                 )}
+                style={isActive ? { 
+                  borderColor: agent.color,
+                  boxShadow: `0 0 20px ${agent.color}40, inset 0 0 0 1px ${agent.color}30`
+                } : undefined}
                 title={isCollapsed ? `${agent.name} - ${agent.role}` : undefined}
               >
                 <div className={cn(

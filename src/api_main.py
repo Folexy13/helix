@@ -457,6 +457,115 @@ async def pillar_transition(sid, data):
         )
 
 
+async def generate_smart_suggestions(checkpoint, orchestrator: IntelligentOrchestrator) -> List[str]:
+    """
+    Generate context-aware suggestions based on the conversation.
+    Uses simple keyword matching for reliability - LLM generation was causing issues.
+    """
+    prompt_text = checkpoint.prompt.lower() if checkpoint.prompt else ""
+    agent_name = checkpoint.agent.value.upper() if hasattr(checkpoint, 'agent') and checkpoint.agent else "ROUTER"
+    
+    # Build conversation context
+    recent_context = ""
+    if orchestrator and orchestrator.conversation_history:
+        recent_context = " ".join([t.content.lower() for t in orchestrator.conversation_history[-3:]])
+    
+    # Determine the workflow stage
+    pillar1_agent_order = ["ARIA", "FELIX", "NOVA", "JUDGE"]
+    current_agent_idx = pillar1_agent_order.index(agent_name) if agent_name in pillar1_agent_order else -1
+    next_agent = pillar1_agent_order[current_agent_idx + 1] if current_agent_idx >= 0 and current_agent_idx < len(pillar1_agent_order) - 1 else None
+    
+    # Generate suggestions based on context - ORDER MATTERS (most specific first)
+    suggestions = []
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # PILLAR 1 - Founding Team Agent Handoffs
+    # ═══════════════════════════════════════════════════════════════════════
+    if "ready to hear from aria" in prompt_text or ("aria" in prompt_text and "cto" in prompt_text):
+        suggestions = ["Yes, let's hear from Aria", "Skip to Felix (CFO)", "Skip to Nova (CMO)", "I have a question first"]
+    elif "pass the baton to felix" in prompt_text or ("felix" in prompt_text and "cfo" in prompt_text):
+        suggestions = ["Yes, bring in Felix", "Skip to Nova (CMO)", "Skip to Judge", "Go back to Aria"]
+    elif "bring in nova" in prompt_text or ("nova" in prompt_text and "cmo" in prompt_text):
+        suggestions = ["Yes, let's hear from Nova", "Skip to Judge", "Go back to Felix", "I have questions"]
+    elif "ready for the tough love" in prompt_text or ("judge" in prompt_text and "investor" in prompt_text):
+        suggestions = ["Yes, give me the tough love", "I'm ready for feedback", "Go back to Nova", "Let me think about it"]
+    elif "what would you like to do next" in prompt_text or "full team's perspective" in prompt_text:
+        suggestions = ["Move to Pillar 2 (Build)", "Ask Aria a follow-up", "Ask Felix a follow-up", "Save this analysis"]
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # PILLAR 2 - Engineering Workforce Agent Handoffs
+    # ═══════════════════════════════════════════════════════════════════════
+    # Intake - Ready to start building
+    elif "ready to start building" in prompt_text or ("planner" in prompt_text and "architecture" in prompt_text):
+        suggestions = ["Yes, let's start!", "I want to add more details", "What will you build exactly?", "How long will this take?"]
+    # After Planner - offer Coder
+    elif "pass the baton to the coder" in prompt_text or ("coder" in prompt_text and "implement" in prompt_text):
+        suggestions = ["Yes, start coding!", "I want to change something", "Explain this more", "Skip to testing"]
+    # After Coder - offer Tester
+    elif "bring in the tester" in prompt_text or ("tester" in prompt_text and "test" in prompt_text):
+        suggestions = ["Yes, run tests", "I want to modify the code", "Skip to documentation", "Skip to review"]
+    # After Tester - offer Docs
+    elif "bring in docs" in prompt_text or ("docs" in prompt_text and "documentation" in prompt_text):
+        suggestions = ["Yes, generate docs", "Skip to review", "Go back to code", "I have questions"]
+    # After Docs - offer Reviewer
+    elif "ready for the review" in prompt_text or ("reviewer" in prompt_text and "quality" in prompt_text):
+        suggestions = ["Yes, review it", "Go back to code", "I want changes first", "Skip review"]
+    # Engineering complete
+    elif "engineering complete" in prompt_text or "you've heard from" in prompt_text:
+        suggestions = ["Create GitHub PR", "Download ZIP", "Move to Pillar 3", "Ask a question"]
+    
+    # Pillar 2 - Code review/modification prompts
+    elif "files created" in prompt_text or "implementation" in prompt_text:
+        suggestions = ["Looks good, continue", "Make changes", "Regenerate", "Go back to planning"]
+    
+    # 2. Funding/capital questions (check before team since funding questions may mention "seeking")
+    elif any(word in prompt_text for word in ["funding", "capital", "investment", "money", "budget", "pre-seed", "seed", "series"]):
+        suggestions = ["Bootstrapping for now", "Pre-seed ($50-250k)", "Seed ($500k-2M)", "Not sure yet"]
+    
+    # 3. Timeline/milestone questions
+    elif any(word in prompt_text for word in ["timeline", "milestone", "deadline", "when", "schedule", "launch"]):
+        suggestions = ["2-4 weeks", "1-2 months", "3-6 months", "Still figuring it out"]
+    
+    # 4. Team/leadership questions (expanded keywords)
+    elif any(word in prompt_text for word in ["team", "building", "leading", "founder", "co-founder", "developer", "who is", "who's"]):
+        suggestions = ["Solo founder", "Small team (2-3)", "Full team (4+)", "Looking for co-founders"]
+    
+    # 5. Stage/progress questions
+    elif any(word in prompt_text for word in ["stage", "far along", "progress", "prototype", "mvp", "idea stage", "built"]):
+        suggestions = ["Just an idea", "Have a prototype", "MVP ready", "Already launched"]
+    
+    # 6. Target market/audience questions
+    elif any(word in prompt_text for word in ["target", "audience", "customer", "market", "who are", "for whom"]):
+        # Check context for specific industries
+        if "shoe" in recent_context or "footwear" in recent_context:
+            suggestions = ["Athletes and runners", "Fashion-conscious consumers", "Budget shoppers", "Mass market"]
+        elif "restaurant" in recent_context or "food" in recent_context:
+            suggestions = ["Restaurant owners", "Food delivery services", "Diners/customers", "Let's continue"]
+        elif "saas" in recent_context or "software" in recent_context:
+            suggestions = ["Small businesses", "Enterprise companies", "Startups", "Let's continue"]
+        else:
+            suggestions = ["Small businesses", "Enterprise companies", "Consumers", "Let's continue"]
+    
+    # 7. Problem/solution questions
+    elif any(word in prompt_text for word in ["problem", "solving", "challenge", "pain point", "issue"]):
+        if "shoe" in recent_context or "footwear" in recent_context:
+            suggestions = ["Finding the right fit", "High prices", "Limited styles", "Quality issues"]
+        else:
+            suggestions = ["Efficiency & automation", "Cost reduction", "Better user experience", "Let's continue"]
+    
+    # 8. Custom/handmade vs mass production
+    elif any(word in prompt_text for word in ["custom", "handmade", "mass-producing", "production", "manufacturing"]):
+        suggestions = ["Custom/handmade", "Mass production", "Both", "Not sure yet"]
+    
+    # 9. Default fallback with next agent if available
+    elif next_agent:
+        suggestions = [f"Yes, bring in {next_agent}", "Tell me more", "I have a question", f"Skip to {pillar1_agent_order[-1]}"]
+    else:
+        suggestions = ["Tell me more", "Let's continue", "I have a question", "Sounds good"]
+    
+    return suggestions
+
+
 async def emit_smart_checkpoint(sid: str, checkpoint, orchestrator: IntelligentOrchestrator):
     """
     Emit an enhanced HITL checkpoint with smart features.
@@ -470,41 +579,8 @@ async def emit_smart_checkpoint(sid: str, checkpoint, orchestrator: IntelligentO
         handler.register_checkpoint(str(checkpoint.id), checkpoint)
         logger.info(f"emit_smart_checkpoint: Registered checkpoint {checkpoint.id} with handler")
     
-    # Generate dynamic suggestions based on the checkpoint context and conversation
-    suggestions = []
-    prompt_lower = checkpoint.prompt.lower() if checkpoint.prompt else ""
-    
-    # Get recent conversation for context
-    recent_context = ""
-    if orchestrator and orchestrator.conversation_history:
-        recent_context = " ".join([t.content.lower() for t in orchestrator.conversation_history[-3:]])
-    
-    # Suggest based on what's being asked - always 4 suggestions
-    if "aria" in prompt_lower or "technical" in prompt_lower or "cto" in prompt_lower:
-        suggestions = ["Yes, let's hear from Aria", "Skip to Felix (CFO)", "Skip to Nova (CMO)", "I have a question first"]
-    elif "felix" in prompt_lower or "financial" in prompt_lower or "cfo" in prompt_lower:
-        suggestions = ["Yes, bring in Felix", "Skip to Nova (CMO)", "Skip to Judge", "Go back to Aria"]
-    elif "nova" in prompt_lower or "marketing" in prompt_lower or "cmo" in prompt_lower:
-        suggestions = ["Yes, let's hear from Nova", "Skip to Judge", "Go back to Felix", "I have questions"]
-    elif "judge" in prompt_lower or "investor" in prompt_lower:
-        suggestions = ["Yes, give me the tough love", "I'm ready for feedback", "Go back to Nova", "Let me think about it"]
-    elif "restaurant" in recent_context or "food" in recent_context:
-        suggestions = ["Restaurant owners", "Food delivery services", "Diners/customers", "Move to next agent"]
-    elif "saas" in recent_context or "software" in recent_context:
-        suggestions = ["Small businesses", "Enterprise companies", "Startups", "Move to next agent"]
-    elif "target" in prompt_lower or "audience" in prompt_lower or "who" in prompt_lower:
-        suggestions = ["Small businesses", "Enterprise companies", "Consumers", "Move to next agent"]
-    elif "problem" in prompt_lower or "solving" in prompt_lower:
-        suggestions = ["Efficiency & automation", "Cost reduction", "Better user experience", "Move to next agent"]
-    elif "stage" in prompt_lower or "far along" in prompt_lower:
-        suggestions = ["Just an idea", "Have a prototype", "MVP ready", "Already launched"]
-    elif "team" in prompt_lower or "building" in prompt_lower:
-        suggestions = ["Solo founder", "Small team (2-3)", "Full team (4+)", "Looking for co-founders"]
-    elif "funding" in prompt_lower or "capital" in prompt_lower:
-        suggestions = ["Bootstrapping", "Pre-seed ($50-250k)", "Seed ($500k-2M)", "Series A ($2M+)"]
-    else:
-        # Default suggestions
-        suggestions = ["Tell me more", "Move to next agent", "Let's continue", "I have a question"]
+    # Generate truly dynamic suggestions using LLM
+    suggestions = await generate_smart_suggestions(checkpoint, orchestrator)
     
     # Get conversation context
     context_summary = orchestrator._generate_context_summary() if orchestrator else ""
@@ -808,6 +884,11 @@ async def run_pillar1_workflow(
                 context.user_input = user_response or ""
                 context.metadata["last_user_response"] = user_response
                 
+                # CRITICAL: Record intake answers so the router tracks progress
+                # This prevents the router from asking the same questions repeatedly
+                if workflow_stage == "intake" and user_response:
+                    router.record_intake_answer(context, user_response)
+                
             elif response.metadata.get("workflow_complete"):
                 # Router signals workflow is done
                 break
@@ -842,10 +923,10 @@ async def run_pillar2_workflow(
     user_input: str
 ):
     """
-    Executes Pillar 2 with intelligent orchestration.
+    Executes Pillar 2 with conversational agent handoffs (like Pillar 1).
     
-    This workflow is now fully conversational - no blocking HITL checkpoints.
-    The AI proceeds autonomously while keeping the user informed.
+    Each agent has a full conversation with the user, and the user must
+    approve before moving to the next agent. No automatic agent chaining.
     """
     orch_agent = OrchestratorAgent()
     
@@ -875,6 +956,9 @@ Build a complete, production-ready frontend application that addresses this star
         user_input=enhanced_input,
     )
     
+    # CRITICAL: Store the original request so it doesn't get overwritten
+    context.metadata["original_request"] = user_input
+    
     # Add any pillar 1 context to metadata
     if from_pillar == 1:
         context.metadata["from_pillar1"] = True
@@ -885,335 +969,200 @@ Build a complete, production-ready frontend application that addresses this star
         'current_stage': 'intake',
         'active_agent': 'ORCHESTRATOR',
         'progress_percent': 10,
-        'stage_description': 'Understanding your requirements',
+        'stage_description': 'Starting conversation',
     }, to=sid)
 
     try:
-        # Step 1: Planning (no blocking - proceed automatically)
-        await sio.emit('pipeline_update', {
-            'current_stage': 'planning',
-            'active_agent': 'PLANNER',
-            'progress_percent': 15,
-            'stage_description': 'Designing architecture and specifications',
-        }, to=sid)
-        await stream_typing_indicator(sid, 'PLANNER', True)
-        await stream_agent_log(sid, 'PLANNER', '📐 Creating architecture, database schema, and project structure...', 'thought')
+        # Conversational loop - Orchestrator manages the flow (like Pillar 1)
+        iteration = 0
+        max_iterations = 50  # Allow many back-and-forth exchanges
         
-        planner_response = await orch_agent.planner.execute(context)
-        await stream_typing_indicator(sid, 'PLANNER', False)
-        await stream_agent_log(sid, 'PLANNER', planner_response.content, 'result')
-        
-        context.metadata["engineering_spec"] = planner_response.metadata
-        context.metadata["spec_text"] = planner_response.content
-        
-        # No HITL blocking - proceed directly to coding
-        # User can still provide feedback via chat which will be handled conversationally
-        await stream_agent_log(sid, 'ORCHESTRATOR', '✅ Architecture designed. Proceeding to code generation...', 'action')
-        
-        # Step 2: Coding
-        await sio.emit('pipeline_update', {
-            'current_stage': 'coding',
-            'active_agent': 'CODER',
-            'progress_percent': 30,
-            'stage_description': 'Generating project files...',
-        }, to=sid)
-        await stream_typing_indicator(sid, 'CODER', True)
-        await stream_agent_log(sid, 'CODER', '🔨 Building project structure and generating code...', 'thought')
-        
-        coder_response = await orch_agent.coder.execute(context)
-        await stream_typing_indicator(sid, 'CODER', False)
-        
-        context.metadata["code_output"] = coder_response.metadata.get("code_output", {})
-        
-        # Stream files to frontend one by one for real-time preview
-        try:
-            import os
-            project_dir = os.path.join(os.getcwd(), "output", "projects", sid)
-            code_output = coder_response.metadata.get("code_output", {})
-            all_files = {**code_output.get("files", {}), **code_output.get("tests", {}), **code_output.get("documentation", {})}
+        while iteration < max_iterations:
+            iteration += 1
             
-            if all_files:
-                total_files = len(all_files)
-                
-                # Language mapping for syntax highlighting
-                lang_map = {
-                    'py': 'python', 'js': 'javascript', 'ts': 'typescript', 
-                    'tsx': 'typescript', 'jsx': 'javascript', 'json': 'json',
-                    'html': 'html', 'css': 'css', 'md': 'markdown', 'sql': 'sql',
-                    'yaml': 'yaml', 'yml': 'yaml', 'sh': 'bash', 'txt': 'text'
-                }
-                
-                # Stream each file individually with a small delay for visual effect
-                for idx, (filepath, content) in enumerate(all_files.items()):
-                    ext = filepath.split('.')[-1] if '.' in filepath else ''
-                    language = lang_map.get(ext, 'text')
-                    
-                    # Calculate progress within coding stage (35% to 55%)
-                    file_progress = 35 + int((idx / total_files) * 20)
-                    
-                    # Emit file streaming event
-                    await sio.emit('file_streaming', {
-                        'path': filepath,
-                        'content': content,
-                        'language': language,
-                        'status': 'writing',
-                        'index': idx,
-                        'total': total_files,
-                    }, to=sid)
-                    
-                    # Update pipeline progress
-                    await sio.emit('pipeline_update', {
-                        'current_stage': 'coding',
-                        'active_agent': 'CODER',
-                        'progress_percent': file_progress,
-                        'stage_description': f'📝 Writing {filepath} ({idx + 1}/{total_files})',
-                    }, to=sid)
-                    
-                    # Log each file creation
-                    await stream_agent_log(sid, 'CODER', f'📄 Created: `{filepath}`', 'action')
-                    
-                    # Small delay for visual streaming effect
-                    await asyncio.sleep(0.1)
-                    
-                    # Mark file as written
-                    await sio.emit('file_streaming', {
-                        'path': filepath,
-                        'content': content,
-                        'language': language,
-                        'status': 'written',
-                        'index': idx,
-                        'total': total_files,
-                    }, to=sid)
-                
-                # Save to filesystem
-                saved_paths = save_project_files(project_dir, all_files)
-                await stream_agent_log(sid, 'SYSTEM', f'💾 Saved {len(saved_paths)} files to `{project_dir}`', 'action')
-                
-                # Emit completion event - frontend can now start installation
-                project_type = 'react' if any('tsx' in f or 'jsx' in f for f in all_files.keys()) else 'node'
-                await sio.emit('files_complete', {
-                    'total_files': total_files,
-                    'project_type': project_type,
-                    'ready_for_install': True,
-                }, to=sid)
-                
-                # Also emit batch for compatibility
-                generated_files = [
-                    {'path': fp, 'content': ct, 'language': lang_map.get(fp.split('.')[-1] if '.' in fp else '', 'text')}
-                    for fp, ct in all_files.items()
-                ]
-                await sio.emit('generated_files', {
-                    'files': generated_files,
-                    'project_type': project_type
-                }, to=sid)
-                
-                logger.info(f"Streamed {total_files} files to frontend for LivePreview")
-                
-                # Summary log
-                await stream_agent_log(sid, 'CODER', f'✅ Generated {total_files} files: {", ".join(list(all_files.keys())[:5])}{"..." if total_files > 5 else ""}', 'result')
-            else:
-                await stream_agent_log(sid, 'CODER', '⚠️ No files were generated', 'error')
-                
-        except Exception as fs_err:
-            logger.error(f"Failed to save project files: {fs_err}")
-            await stream_agent_log(sid, 'SYSTEM', f'❌ Error saving files: {str(fs_err)}', 'error')
-        
-        # HITL Checkpoint: Review Code before Testing
-        code_output = coder_response.metadata.get("code_output", {})
-        files_created = list(code_output.get("files", {}).keys())
-        
-        coder_checkpoint = SmartCheckpoint(
-            gate_type=HITLGateType.REVIEWER_FLAG,
-            pillar=2,
-            agent=AgentRole.CODER,
-            prompt="Review the generated code before running tests",
-            options=[HITLDecision.APPROVE, HITLDecision.REJECT, HITLDecision.MODIFY],
-            context_summary=f'Created {len(files_created)} files including: {", ".join(files_created[:5])}{"..." if len(files_created) > 5 else ""}',
-        )
-        
-        # CRITICAL: Register checkpoint BEFORE emitting to frontend
-        hitl_handler.register_checkpoint(str(coder_checkpoint.id), coder_checkpoint)
-        
-        await sio.emit('hitl_checkpoint', {
-            'id': str(coder_checkpoint.id),
-            'gate_type': coder_checkpoint.gate_type.value,
-            'pillar': 2,
-            'agent': 'CODER',
-            'prompt': f'💻 **Code Generation Complete**\n\nGenerated {len(files_created)} files. Review the code in the Files tab before proceeding to testing.',
-            'options': ['approve', 'reject', 'modify'],
-            'context_summary': f'Created {len(files_created)} files including: {", ".join(files_created[:5])}{"..." if len(files_created) > 5 else ""}',
-            'agent_persona': AGENT_PERSONAS.get('CODER'),
-            'allows_follow_up': True,
-            'next_step_options': [
-                {
-                    'id': 'approve',
-                    'label': '✅ Approve & Run Tests',
-                    'description': 'Proceed to automated testing',
-                    'action': 'approve',
-                    'color': '#10b981',
-                },
-                {
-                    'id': 'modify',
-                    'label': '✏️ Request Changes',
-                    'description': 'Ask for code modifications',
-                    'action': 'modify',
-                    'color': '#f59e0b',
-                },
-            ],
-            'timestamp': datetime.utcnow().isoformat(),
-        }, to=sid)
-        
-        # Wait for user decision - this BLOCKS until user responds
-        coder_decision = await hitl_handler.present_checkpoint(coder_checkpoint)
-        
-        if coder_decision == HITLDecision.REJECT:
-            await stream_agent_log(sid, 'SYSTEM', '❌ Code rejected. Pipeline stopped.', 'error')
-            return
-        
-        # Handle MODIFY decision - loop back to CODER with user feedback
-        if coder_decision == HITLDecision.MODIFY:
-            # Get the user's modification request from the checkpoint
-            user_feedback = hitl_handler.get_last_user_input() or "Please make the requested changes."
+            # Determine which agent is active based on workflow stage
+            workflow_stage = context.metadata.get("workflow_stage", "intake")
+            active_agent = "ORCHESTRATOR"
+            if "planner" in workflow_stage:
+                active_agent = "PLANNER"
+            elif "coder" in workflow_stage:
+                active_agent = "CODER"
+            elif "tester" in workflow_stage:
+                active_agent = "TESTER"
+            elif "docs" in workflow_stage:
+                active_agent = "DOCS"
+            elif "reviewer" in workflow_stage:
+                active_agent = "REVIEWER"
             
-            await stream_agent_log(sid, 'SYSTEM', '✏️ Modification requested. Routing back to CODER...', 'action')
+            # Show "thinking" message like Pillar 1 does
+            thinking_messages = {
+                "ORCHESTRATOR": "🤔 Understanding your request...",
+                "PLANNER": "📐 Designing the architecture and features...",
+                "CODER": "💻 Writing the code for your application...",
+                "TESTER": "🧪 Running automated tests...",
+                "DOCS": "📝 Generating documentation...",
+                "REVIEWER": "🔍 Reviewing code quality and security...",
+            }
+            await stream_agent_log(sid, active_agent, thinking_messages.get(active_agent, "Processing..."), 'thought')
             
-            # Update context with modification request
-            context.metadata["modification_request"] = user_feedback
-            context.metadata["is_modification"] = True
+            # Execute orchestrator (which may delegate to specialists)
+            await stream_typing_indicator(sid, active_agent, True)
+            response = await orch_agent.execute(context)
+            await stream_typing_indicator(sid, active_agent, False)
             
-            # Re-run CODER with modification context
+            # Determine the speaker for the response
+            response_stage = context.metadata.get("workflow_stage", "intake")
+            speaker = "ORCHESTRATOR"
+            if "planner_active" in response_stage or "coder_pending" in response_stage:
+                speaker = "PLANNER"
+            elif "coder_active" in response_stage or "tester_pending" in response_stage:
+                speaker = "CODER"
+            elif "tester_active" in response_stage or "docs_pending" in response_stage:
+                speaker = "TESTER"
+            elif "docs_active" in response_stage or "reviewer_pending" in response_stage:
+                speaker = "DOCS"
+            elif "reviewer_active" in response_stage or "complete" in response_stage:
+                speaker = "REVIEWER"
+            
+            # Stream the response
+            if response.content:
+                await stream_agent_log(sid, speaker, response.content, 'result')
+                orchestrator.add_conversation_turn(speaker.lower(), response.content)
+            
+            # Update pipeline with current agent
+            progress_map = {
+                "intake": 10, "planner_pending": 15, "planner_active": 20,
+                "coder_pending": 30, "coder_active": 40,
+                "tester_pending": 55, "tester_active": 65,
+                "docs_pending": 75, "docs_active": 80,
+                "reviewer_pending": 85, "reviewer_active": 90,
+                "complete": 100
+            }
+            progress = progress_map.get(response_stage, min(20 + iteration * 5, 95))
+            
             await sio.emit('pipeline_update', {
-                'current_stage': 'coding',
-                'active_agent': 'CODER',
-                'progress_percent': 45,
-                'stage_description': 'Applying requested modifications',
-            }, to=sid)
-            await stream_typing_indicator(sid, 'CODER', True)
-            await stream_agent_log(sid, 'CODER', f'📝 Applying modifications: {user_feedback}', 'thought')
-            
-            # Execute CODER again with modification context
-            coder_response = await orch_agent.coder.execute(context)
-            await stream_typing_indicator(sid, 'CODER', False)
-            await stream_agent_log(sid, 'CODER', coder_response.content, 'result')
-            
-            # Update context with new code output
-            context.metadata["code_output"] = coder_response.metadata.get("code_output", {})
-            
-            # Save updated files
-            code_output = coder_response.metadata.get("code_output", {})
-            if code_output.get("files"):
-                try:
-                    project_id = await save_project_files(code_output["files"])
-                    await sio.emit('generated_files', {
-                        'project_id': project_id,
-                        'files': [
-                            {'path': path, 'content': content, 'status': 'written'}
-                            for path, content in code_output["files"].items()
-                        ]
-                    }, to=sid)
-                    await stream_agent_log(sid, 'SYSTEM', f'💾 Updated {len(code_output["files"])} files', 'action')
-                except Exception as fs_err:
-                    logger.error(f"Failed to save updated files: {fs_err}")
-            
-            # Create another checkpoint for the modified code
-            files_created = list(code_output.get("files", {}).keys())
-            modified_checkpoint = SmartCheckpoint(
-                gate_type=HITLGateType.REVIEWER_FLAG,
-                pillar=2,
-                agent=AgentRole.CODER,
-                prompt="Review the modified code before running tests",
-                options=[HITLDecision.APPROVE, HITLDecision.REJECT, HITLDecision.MODIFY],
-                context_summary=f'Modified {len(files_created)} files based on your feedback',
-            )
-            
-            hitl_handler.register_checkpoint(str(modified_checkpoint.id), modified_checkpoint)
-            
-            await sio.emit('hitl_checkpoint', {
-                'id': str(modified_checkpoint.id),
-                'gate_type': modified_checkpoint.gate_type.value,
-                'pillar': 2,
-                'agent': 'CODER',
-                'prompt': f'💻 **Code Modified**\n\nApplied your requested changes to {len(files_created)} files. Review the updated code before proceeding.',
-                'options': ['approve', 'reject', 'modify'],
-                'context_summary': f'Modified files: {", ".join(files_created[:5])}{"..." if len(files_created) > 5 else ""}',
-                'agent_persona': AGENT_PERSONAS.get('CODER'),
-                'allows_follow_up': True,
-                'next_step_options': [
-                    {
-                        'id': 'approve',
-                        'label': '✅ Approve & Run Tests',
-                        'description': 'Proceed to automated testing',
-                        'action': 'approve',
-                        'color': '#10b981',
-                    },
-                    {
-                        'id': 'modify',
-                        'label': '✏️ Request More Changes',
-                        'description': 'Ask for additional modifications',
-                        'action': 'modify',
-                        'color': '#f59e0b',
-                    },
-                ],
-                'timestamp': datetime.utcnow().isoformat(),
+                'current_stage': response_stage,
+                'active_agent': speaker,
+                'progress_percent': progress,
+                'stage_description': f'{speaker} is speaking...',
             }, to=sid)
             
-            # Wait for decision on modified code
-            modified_decision = await hitl_handler.present_checkpoint(modified_checkpoint)
+            # Handle code output - stream files to frontend
+            code_output = response.metadata.get("code_output", {})
+            if code_output and code_output.get("files"):
+                await _stream_generated_files(sid, code_output)
             
-            if modified_decision == HITLDecision.REJECT:
-                await stream_agent_log(sid, 'SYSTEM', '❌ Modified code rejected. Pipeline stopped.', 'error')
-                return
-            
-            # If still MODIFY, we could loop again, but for now proceed after one modification
-            if modified_decision == HITLDecision.MODIFY:
-                await stream_agent_log(sid, 'SYSTEM', '⚠️ Additional modifications requested. Please use the input field to describe changes, then approve when ready.', 'action')
+            # Check if there's a checkpoint (question for user)
+            if response.hitl_checkpoint and not response.hitl_checkpoint.is_resolved:
+                checkpoint = response.hitl_checkpoint
+                
+                # Emit checkpoint for user to respond
+                await emit_smart_checkpoint(sid, checkpoint, orchestrator)
+                
+                # Wait for user response
+                decision = await hitl_handler.present_checkpoint(checkpoint)
+                user_response = hitl_handler.get_last_user_input()
+                
+                # Add user response to context
+                orchestrator.add_conversation_turn("user", user_response or f"Decision: {decision.value}")
+                context.user_input = user_response or ""
+                context.metadata["last_user_response"] = user_response
+                
+                # Record intake answers so the orchestrator tracks progress
+                if workflow_stage == "intake" and user_response:
+                    orch_agent.record_intake_answer(context, user_response)
+                
+            elif response.metadata.get("workflow_complete"):
+                # Orchestrator signals workflow is done
+                break
+            else:
+                # No checkpoint and not complete - wait for more user input
+                break
         
-        await stream_agent_log(sid, 'SYSTEM', '✅ Code approved. Proceeding to testing...', 'action')
-        
-        # Step 3: Testing
-        await sio.emit('pipeline_update', {
-            'current_stage': 'testing',
-            'active_agent': 'TESTER',
-            'progress_percent': 65,
-            'stage_description': 'Validating implementation with tests',
-        }, to=sid)
-        await stream_typing_indicator(sid, 'TESTER', True)
-        await stream_agent_log(sid, 'TESTER', '🧪 Running automated test suites...', 'thought')
-        
-        tester_response = await orch_agent.tester.execute(context)
-        await stream_typing_indicator(sid, 'TESTER', False)
-        await stream_agent_log(sid, 'TESTER', tester_response.content, 'result')
-        
-        context.metadata["test_output"] = tester_response.metadata
-        
-        # Step 4: Review
-        await sio.emit('pipeline_update', {
-            'current_stage': 'reviewing',
-            'active_agent': 'REVIEWER',
-            'progress_percent': 85,
-            'stage_description': 'Performing final code review',
-        }, to=sid)
-        await stream_typing_indicator(sid, 'REVIEWER', True)
-        await stream_agent_log(sid, 'REVIEWER', 'Checking for security and quality issues...', 'thought')
-        
-        reviewer_response = await orch_agent.reviewer.execute(context)
-        await stream_typing_indicator(sid, 'REVIEWER', False)
-        await stream_agent_log(sid, 'REVIEWER', reviewer_response.content, 'result')
-        
-        # Step 5: Finalization
+        # Final completion
         await sio.emit('pipeline_update', {
             'current_stage': 'complete',
             'active_agent': None,
             'progress_percent': 100,
-            'stage_description': 'Engineering package complete!',
+            'stage_description': 'Engineering complete!',
         }, to=sid)
         
-        # Final deployment checkpoint
-        await emit_next_steps_checkpoint(sid, orchestrator, pillar=2, brief_summary={})
+        # Emit next-steps checkpoint
+        await emit_next_steps_checkpoint(sid, orchestrator, pillar=2, brief_summary={
+            'feature': user_input[:100],
+        })
 
     except Exception as e:
         logger.exception("Error in Pillar 2 pipeline")
         await stream_agent_log(sid, 'SYSTEM', f'❌ Error: {str(e)}', 'error')
+
+
+async def _stream_generated_files(sid: str, code_output: dict):
+    """Helper function to stream generated files to frontend."""
+    import os
+    
+    all_files = {
+        **code_output.get("files", {}), 
+        **code_output.get("tests", {}), 
+        **code_output.get("documentation", {})
+    }
+    
+    if not all_files:
+        return
+    
+    total_files = len(all_files)
+    
+    # Language mapping for syntax highlighting
+    lang_map = {
+        'py': 'python', 'js': 'javascript', 'ts': 'typescript', 
+        'tsx': 'typescript', 'jsx': 'javascript', 'json': 'json',
+        'html': 'html', 'css': 'css', 'md': 'markdown', 'sql': 'sql',
+        'yaml': 'yaml', 'yml': 'yaml', 'sh': 'bash', 'txt': 'text'
+    }
+    
+    # Stream each file individually
+    for idx, (filepath, content) in enumerate(all_files.items()):
+        ext = filepath.split('.')[-1] if '.' in filepath else ''
+        language = lang_map.get(ext, 'text')
+        
+        # Emit file streaming event
+        await sio.emit('file_streaming', {
+            'path': filepath,
+            'content': content,
+            'language': language,
+            'status': 'written',
+            'index': idx,
+            'total': total_files,
+        }, to=sid)
+        
+        # Small delay for visual streaming effect
+        await asyncio.sleep(0.05)
+    
+    # Save to filesystem
+    try:
+        project_dir = os.path.join(os.getcwd(), "output", "projects", sid)
+        saved_paths = save_project_files(project_dir, all_files)
+        await stream_agent_log(sid, 'SYSTEM', f'💾 Saved {len(saved_paths)} files', 'action')
+    except Exception as fs_err:
+        logger.error(f"Failed to save project files: {fs_err}")
+    
+    # Emit completion event
+    project_type = 'react' if any('tsx' in f or 'jsx' in f for f in all_files.keys()) else 'node'
+    await sio.emit('files_complete', {
+        'total_files': total_files,
+        'project_type': project_type,
+        'ready_for_install': True,
+    }, to=sid)
+    
+    # Also emit batch for compatibility
+    generated_files = [
+        {'path': fp, 'content': ct, 'language': lang_map.get(fp.split('.')[-1] if '.' in fp else '', 'text')}
+        for fp, ct in all_files.items()
+    ]
+    await sio.emit('generated_files', {
+        'files': generated_files,
+        'project_type': project_type
+    }, to=sid)
 
 
 async def run_pillar3_workflow(

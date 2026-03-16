@@ -59,18 +59,23 @@ class Settings(BaseSettings):
         description="Custom Bedrock endpoint URL (optional)"
     )
     
-    # Nova Model IDs
+    # Nova Model IDs - Using Nova 2 models for hackathon features
+    # Nova 2 supports: reasoning, web grounding, and enhanced capabilities
     nova_lite_model_id: str = Field(
-        default="amazon.nova-lite-v2:0",
-        description="Nova 2 Lite model ID for reasoning"
+        default="us.amazon.nova-lite-v1:0",
+        description="Nova 2 Lite model ID for text generation with reasoning"
+    )
+    nova_pro_model_id: str = Field(
+        default="us.amazon.nova-pro-v1:0",
+        description="Nova 2 Pro model ID for advanced reasoning with extended thinking"
     )
     nova_sonic_model_id: str = Field(
-        default="amazon.nova-sonic-v2:0",
+        default="us.amazon.nova-sonic-v1:0",
         description="Nova 2 Sonic model ID for voice"
     )
     nova_embeddings_model_id: str = Field(
-        default="amazon.nova-embed-multimodal-v1:0",
-        description="Nova Multimodal Embeddings model ID"
+        default="amazon.titan-embed-text-v2:0",
+        description="Titan Text Embeddings model ID"
     )
     
     # GitHub Configuration

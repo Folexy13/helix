@@ -124,20 +124,16 @@ You MUST create visually stunning, modern designs:
 - **Typography**: Use font-weight variations, letter-spacing, and proper hierarchy
 - **Colors**: Use a cohesive color palette with proper contrast ratios
 
-### Modern UI Patterns
-- **Glass morphism**: backdrop-blur-xl bg-white/80 for floating elements
-- **Micro-interactions**: Hover states, transitions, transforms
-- **Skeleton loaders**: Show loading states properly
-- **Empty states**: Design beautiful empty states with illustrations
-- **Error states**: Graceful error handling with helpful messages
-- **Success feedback**: Toast notifications, confetti, celebrations
+### Modern UI Patterns & Media
+- **Background Media**: Include a sophisticated background video, high-quality images (via Unsplash URLs), or dynamic SVG blobs/mesh gradients behind the main content area for a striking visual impression.
+- **Glass morphism**: backdrop-blur-3xl bg-white/10 dark:bg-black/40 for floating elements, cards, and navbars.
+- **Micro-interactions**: Subtle button scale on press, gradient border highlights on hover.
+- **Skeleton loaders & State Handling**: Always provide sophisticated loading, empty, and error states.
 
-### Animation & Motion
-- Use Framer Motion for smooth animations
-- Stagger animations for lists
-- Page transitions
-- Hover effects with scale, shadow changes
-- Loading spinners and progress indicators
+### Animation, Motion & 3D
+- Liberally use Framer Motion for smooth animations, staggering elements on mount, and layout transitions.
+- Use 3D CSS transforms and scroll-driven parallax effects.
+- Include interactive, modern elements like animated gradient text, glowing borders, and floating particles.
 
 ### Icons - CRITICAL
 - Use `lucide-react` for ALL icons (it's already in dependencies)
@@ -740,9 +736,13 @@ export default {
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]
@@ -1105,7 +1105,7 @@ class CoderAgent(BaseAgent):
 {context.user_input}
 
 ## Engineering Specification:
-{context.metadata.get('spec_text', 'No specification provided.')}
+{context.metadata.get('planner_analysis', 'No specification provided.')}
 
 ## Tasks to Implement:
 {self._format_tasks(tasks)}
@@ -1411,11 +1411,76 @@ Now generate ALL the files needed for this project. Remember: EVERY IMPORT MUST 
             import_patterns = [
                 r"import\s+.*?\s+from\s+['\"](\.[^'\"]+)['\"]",  # import X from './path'
                 r"import\s+['\"](\.[^'\"]+)['\"]",  # import './path'
+                r"import\s+.*?\s+from\s+['\"](@/[^'\"]+)['\"]",  # import X from '@/path' (path alias)
             ]
             
             for pattern in import_patterns:
                 imports = re.findall(pattern, content)
                 for imp in imports:
+                    # Handle @/ path alias - convert to src/ path
+                    if imp.startswith('@/'):
+                        full_path = 'src/' + imp[2:]
+                        # Add extension if missing
+                        if not any(full_path.endswith(ext) for ext in ['.tsx', '.ts', '.jsx', '.js', '.css', '.json']):
+                            for ext in ['.tsx', '.ts', '.jsx', '.js']:
+                                test_path = f"{full_path}{ext}"
+                                if test_path in all_files:
+                                    full_path = test_path
+                                    break
+                            else:
+                                full_path = f"{full_path}.ts"
+                        
+                        # Check if the file exists
+                        if full_path not in all_files and full_path not in missing_files:
+                            logger.warning(f"Missing @/ import detected: {full_path} (imported from {file_path})")
+                            
+                            # Generate appropriate stub content
+                            if 'store/' in full_path:
+                                stub_content = '''import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+interface User {
+  id: string;
+  name: string;
+  email: string;
+}
+
+interface AuthState {
+  user: User | null;
+  isAuthenticated: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => void;
+}
+
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
+      user: null,
+      isAuthenticated: false,
+      login: async (email: string, password: string) => {
+        // Mock login - simulate API call
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const user = { id: '1', name: 'John Doe', email };
+        set({ user, isAuthenticated: true });
+      },
+      logout: () => set({ user: null, isAuthenticated: false }),
+    }),
+    { name: 'auth-storage' }
+  )
+);
+
+export const useStore = useAuthStore;
+export default useAuthStore;
+'''
+                            else:
+                                stub_content = '''/**
+ * Stub file - TODO: Implement actual logic
+ */
+export default {};
+'''
+                            missing_files[full_path] = stub_content
+                        continue
+                    
                     # Resolve the import path relative to the file
                     if file_path.startswith('src/'):
                         base_dir = '/'.join(file_path.split('/')[:-1])

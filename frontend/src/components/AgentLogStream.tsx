@@ -525,7 +525,7 @@ function ConversationItem({ message, persona }: { message: ConversationMessage; 
           isResult 
             ? "bg-[#0b101a] border border-slate-700/80 p-6" 
             : logType === 'thought'
-            ? "bg-purple-500/10 border border-purple-500/20 px-5 py-4 text-purple-100"
+            ? "bg-slate-800/60 border border-slate-600/30 px-5 py-4 text-slate-400 italic animate-pulse"
             : logType === 'action'
             ? "bg-yellow-500/10 border border-yellow-500/20 px-5 py-4 text-yellow-100"
             : logType === 'error'
@@ -534,6 +534,11 @@ function ConversationItem({ message, persona }: { message: ConversationMessage; 
         )}>
           {isResult ? (
             <RichContent content={message.content} isResult={true} speaker={message.speaker} />
+          ) : logType === 'thought' ? (
+            <div className="flex items-center gap-3">
+              <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
+              <p className="text-slate-400">{message.content}</p>
+            </div>
           ) : (
             <p>{message.content}</p>
           )}

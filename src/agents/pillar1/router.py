@@ -194,21 +194,56 @@ class RouterAgent(BaseAgent):
         """
         text = user_input.lower().strip()
         
-        # Direct agent mentions
-        if any(x in text for x in ['aria', 'cto', 'technical']):
+        # FIRST: Check for specific agent mentions with "move to" pattern
+        # This must come before generic "move to" detection
+        if 'move to' in text:
+            if 'aria' in text:
+                return 'aria'
+            if 'felix' in text:
+                return 'felix'
+            if 'nova' in text:
+                return 'nova'
+            if 'judge' in text:
+                return 'judge'
+        
+        # Check for "go back to" or "connect me to" patterns
+        go_back_patterns = ['go back to', 'connect me to', 'switch to', 'talk to', 'ask']
+        for pattern in go_back_patterns:
+            if pattern in text:
+                if 'aria' in text:
+                    return 'aria'
+                if 'felix' in text:
+                    return 'felix'
+                if 'nova' in text:
+                    return 'nova'
+                if 'judge' in text:
+                    return 'judge'
+        
+        # Direct agent mentions (only if they're asking for that agent specifically)
+        if any(x in text for x in ['bring in aria', 'hear from aria', 'yes, aria', "let's hear from aria"]):
             return 'aria'
-        if any(x in text for x in ['felix', 'cfo', 'financial', 'money', 'cost']):
+        if any(x in text for x in ['bring in felix', 'hear from felix', 'yes, felix', "let's hear from felix", 'yes, bring in felix']):
             return 'felix'
-        if any(x in text for x in ['nova', 'cmo', 'marketing', 'market']):
+        if any(x in text for x in ['bring in nova', 'hear from nova', 'yes, nova', "let's hear from nova"]):
             return 'nova'
-        if any(x in text for x in ['judge', 'investor', 'fundability']):
+        if any(x in text for x in ['bring in judge', 'hear from judge', 'yes, judge', "let's hear from judge", 'tough love', 'ready for feedback']):
             return 'judge'
         
-        # Move forward phrases
+        # Skip to specific agent
+        if 'skip to' in text:
+            if 'felix' in text:
+                return 'felix'
+            if 'nova' in text:
+                return 'nova'
+            if 'judge' in text:
+                return 'judge'
+        
+        # Move forward phrases (generic - no specific agent mentioned)
         move_phrases = [
-            'next', 'move on', 'continue', 'proceed', 'go ahead', 'yes', 'sure',
-            'let\'s go', 'bring', 'pass the baton', 'move to', 'skip', 'ready',
-            'ok', 'okay', 'yep', 'yeah', 'sounds good', 'let\'s hear', 'go for it'
+            'next agent', 'move on', 'continue', 'proceed', 'go ahead', 'yes', 'sure',
+            'let\'s go', 'bring', 'pass the baton', 'ready',
+            'ok', 'okay', 'yep', 'yeah', 'sounds good', 'let\'s hear', 'go for it',
+            'let\'s continue', 'next'
         ]
         if any(phrase in text for phrase in move_phrases):
             return 'next'
@@ -239,21 +274,25 @@ class RouterAgent(BaseAgent):
         # Check if user is requesting to move to a specific agent or next
         agent_request = self._detect_agent_request(user_response)
         
-        # Handle direct agent requests during intake
-        if stage == "intake" and agent_request and agent_request != 'next':
-            # User wants to skip to a specific agent
+        # Handle direct agent requests at ANY stage (not just intake)
+        # This allows users to say "go back to Aria" or "connect me to Felix" at any point
+        if agent_request and agent_request != 'next':
             if agent_request == 'aria':
                 context.metadata["workflow_stage"] = "aria_pending"
                 stage = "aria_pending"
+                logger.info("User requested to switch to ARIA")
             elif agent_request == 'felix':
                 context.metadata["workflow_stage"] = "felix_pending"
                 stage = "felix_pending"
+                logger.info("User requested to switch to FELIX")
             elif agent_request == 'nova':
                 context.metadata["workflow_stage"] = "nova_pending"
                 stage = "nova_pending"
+                logger.info("User requested to switch to NOVA")
             elif agent_request == 'judge':
                 context.metadata["workflow_stage"] = "judge_pending"
                 stage = "judge_pending"
+                logger.info("User requested to switch to JUDGE")
         
         # ═══════════════════════════════════════════════════════════════════════
         # STAGE: INTAKE - Gather initial info
@@ -276,7 +315,7 @@ Let me bring in Aria, our CTO — she'll assess the technical feasibility and su
 Ready to hear from Aria?"""
             
             checkpoint = self.create_hitl_checkpoint(
-                gate_type=HITLGateType.CLARIFICATION,
+                gate_type=HITLGateType.IDEA_CLARIFICATION,
                 prompt=handoff_prompt,
                 options=[HITLDecision.APPROVE],
                 metadata={"next_agent": "aria"},
@@ -307,7 +346,7 @@ Ready to hear from Aria?"""
 That's my technical take. Want me to pass the baton to Felix? He's our CFO — he'll break down the costs, burn rate, and funding strategy."""
             
             checkpoint = self.create_hitl_checkpoint(
-                gate_type=HITLGateType.CLARIFICATION,
+                gate_type=HITLGateType.IDEA_CLARIFICATION,
                 prompt=handoff_prompt,
                 options=[HITLDecision.APPROVE],
                 metadata={"next_agent": "felix"},
@@ -337,7 +376,7 @@ That's my technical take. Want me to pass the baton to Felix? He's our CFO — h
 That's the financial picture. Want me to bring in Nova? She's our CMO — she'll work on your value proposition and go-to-market strategy."""
             
             checkpoint = self.create_hitl_checkpoint(
-                gate_type=HITLGateType.CLARIFICATION,
+                gate_type=HITLGateType.IDEA_CLARIFICATION,
                 prompt=handoff_prompt,
                 options=[HITLDecision.APPROVE],
                 metadata={"next_agent": "nova"},
@@ -367,7 +406,7 @@ That's the financial picture. Want me to bring in Nova? She's our CMO — she'll
 That's the marketing angle. Last up is Judge — he plays the skeptical investor and will stress-test the whole idea. Ready for the tough love?"""
             
             checkpoint = self.create_hitl_checkpoint(
-                gate_type=HITLGateType.CLARIFICATION,
+                gate_type=HITLGateType.IDEA_CLARIFICATION,
                 prompt=handoff_prompt,
                 options=[HITLDecision.APPROVE],
                 metadata={"next_agent": "judge"},

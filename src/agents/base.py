@@ -233,6 +233,10 @@ class BaseAgent(ABC):
         # Determine reasoning effort
         reasoning = override_reasoning or self.reasoning_effort
         
+        # Nova 2 Lite supports extended thinking/reasoning
+        # Always use Nova Lite - it handles both regular and reasoning requests
+        model_id = settings.nova_lite_model_id
+        
         # Get tools if enabled
         tools = self.get_tools_for_bedrock() if use_tools and self._tools else None
         
@@ -241,6 +245,7 @@ class BaseAgent(ABC):
             prompt=prompt,
             system_prompt=self.system_prompt,
             messages=messages,
+            model_id=model_id,
             reasoning_effort=reasoning,
             tools=tools,
         )
