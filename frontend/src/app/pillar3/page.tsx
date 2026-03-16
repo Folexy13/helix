@@ -187,115 +187,37 @@ export default function Pillar3Page() {
   };
 
   return (
-    <div className="flex h-screen bg-[#1a1a1a] overflow-hidden">
+    <div className="flex h-screen bg-[#0d0d0d] overflow-hidden text-slate-300">
       {/* Left Sidebar */}
-      <CollapsibleSidebar 
+      <CollapsibleSidebar
         isCollapsed={leftSidebarCollapsed}
         onToggle={handleLeftToggle}
       />
 
-      {/* Main Content Area */}
+      {/* Main Content Area - Sophisticated Split View */}
       <div className="flex-1 flex min-w-0 relative">
-        {/* File Tree Panel */}
-        {showFileTree && (
-          <div className="w-64 border-r border-[#2a2a2a] flex flex-col bg-[#1a1a1a]">
-            {/* File Tree Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[#2a2a2a]">
-              <div className="flex items-center gap-2">
-                <FolderTree className="w-4 h-4 text-purple-400" />
-                <span className="text-sm font-medium text-white">Codebase</span>
-              </div>
-              <button
-                onClick={() => setShowFileTree(false)}
-                className="p-1 rounded hover:bg-[#2a2a2a] text-slate-400"
-              >
-                <PanelLeftClose className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Connection Status */}
-            <div className="px-4 py-2 border-b border-[#2a2a2a]">
-              {isLocalConnected ? (
-                <div className="flex items-center gap-2 text-xs text-emerald-400">
-                  <CheckCircle className="w-3 h-3" />
-                  <span>{indexedCount} files indexed</span>
-                </div>
-              ) : isIndexing ? (
-                <div className="flex items-center gap-2 text-xs text-cyan-400">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  <span>Indexing...</span>
-                </div>
-              ) : (
-                <button
-                  onClick={handleConnectLocal}
-                  className="flex items-center gap-2 text-xs text-slate-400 hover:text-white"
-                >
-                  <FolderOpen className="w-3 h-3" />
-                  <span>Connect folder</span>
-                </button>
-              )}
-            </div>
-
-            {/* File Tree */}
-            <div className="flex-1 overflow-y-auto p-2">
-              {localFiles.length > 0 ? (
-                localFiles.map((entry, i) => (
-                  <FileTreeItem key={i} entry={entry} />
-                ))
-              ) : (
-                <div className="text-center text-slate-500 text-sm py-8">
-                  <Database className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                  <p>No files loaded</p>
-                </div>
-              )}
-            </div>
-
-            {/* Quick Questions */}
-            <div className="p-3 border-t border-[#2a2a2a]">
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
-                Quick Questions
-              </p>
-              <div className="space-y-1">
-                {QUICK_QUESTIONS.map((q, i) => (
-                  <button
-                    key={i}
-                    onClick={() => handleSendMessage(q)}
-                    disabled={isProcessing}
-                    className="w-full text-left text-xs text-slate-400 hover:text-white hover:bg-[#2a2a2a] px-2 py-1.5 rounded transition-colors disabled:opacity-50"
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Show File Tree Button (when hidden) */}
-        {!showFileTree && (
-          <button
-            onClick={() => setShowFileTree(true)}
-            className="absolute left-4 top-4 z-10 p-2 rounded-lg bg-[#2a2a2a] border border-[#3a3a3a] hover:bg-[#3a3a3a] text-slate-400 hover:text-white transition-all"
-            title="Show file tree"
-          >
-            <PanelLeft className="w-4 h-4" />
-          </button>
-        )}
-
         {/* Chat Section */}
-        <div className="flex-1 flex flex-col min-w-0 relative">
-          {/* Connection Status */}
-          <div className={cn(
-            "absolute top-4 right-4 z-10 flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all",
-            isConnected 
-              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
-              : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-          )}>
-            <span className={cn(
-              "w-2 h-2 rounded-full",
-              isConnected ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]" : "bg-rose-500"
-            )} />
-            {isConnected ? 'Connected' : 'Disconnected'}
+        <div className="flex-1 flex flex-col min-w-0 relative bg-gradient-to-br from-[#121212] to-[#1a1a1a] border-r border-[#2a2a2a]">
+          {/* Status Bar */}
+          <div className="absolute top-4 left-4 z-10 flex gap-2">
+            <div className={cn(
+              "flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide backdrop-blur-md transition-all shadow-lg border",
+              isConnected
+                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+            )}>
+              <span className={cn(
+                "w-2 h-2 rounded-full",
+                isConnected ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]" : "bg-rose-500"
+              )} />
+              {isConnected ? 'LIVE PIPELINE' : 'DISCONNECTED'}
+            </div>
+            {isLocalConnected && (
+              <div className="flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide bg-purple-500/10 text-purple-400 border border-purple-500/20 backdrop-blur-md shadow-lg">
+                <Database className="w-3 h-3" />
+                {indexedCount} FILES INDEXED
+              </div>
+            )}
           </div>
 
           <ChatInterface
@@ -303,10 +225,125 @@ export default function Pillar3Page() {
             onSendMessage={handleSendMessage}
             isProcessing={isProcessing}
             activeAgent={activeAgent ?? undefined}
-            placeholder="Ask a question about your codebase..."
+            placeholder="Ask Sage anything about your codebase architecture..."
             pillar={3}
           />
         </div>
+
+        {/* Intelligence / Code Explorer Panel */}
+        {showFileTree && (
+          <div className="w-[400px] flex flex-col bg-[#141414] shadow-2xl z-20 transition-all duration-300">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-5 border-b border-[#2a2a2a] bg-[#1a1a1a]">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-purple-500/10 rounded-lg">
+                  <Brain className="w-5 h-5 text-purple-400" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-white">Code Intelligence</h2>
+                  <p className="text-xs text-slate-500">Semantic Search & RAG</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowFileTree(false)}
+                className="p-2 rounded-lg hover:bg-[#2a2a2a] text-slate-400 hover:text-white transition-colors"
+                title="Hide panel"
+              >
+                <PanelLeftClose className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Connection Actions */}
+            <div className="p-6 border-b border-[#2a2a2a] bg-gradient-to-b from-[#1a1a1a] to-transparent">
+              {isIndexing ? (
+                <div className="flex flex-col items-center justify-center py-6 text-cyan-400 bg-cyan-500/5 rounded-xl border border-cyan-500/10">
+                  <Loader2 className="w-6 h-6 animate-spin mb-3" />
+                  <span className="text-sm font-medium">Indexing Workspace...</span>
+                  <span className="text-xs text-cyan-500/70 mt-1">Generating multimodal embeddings</span>
+                </div>
+              ) : !isLocalConnected ? (
+                <button
+                  onClick={handleConnectLocal}
+                  className="w-full group flex flex-col items-center justify-center py-8 px-4 rounded-xl border-2 border-dashed border-[#333] hover:border-purple-500/50 hover:bg-purple-500/5 transition-all"
+                >
+                  <div className="p-3 bg-[#222] rounded-full group-hover:bg-purple-500/20 group-hover:scale-110 transition-all mb-3">
+                    <FolderOpen className="w-6 h-6 text-slate-400 group-hover:text-purple-400" />
+                  </div>
+                  <span className="text-sm font-medium text-slate-300 mb-1">Connect Local Workspace</span>
+                  <span className="text-xs text-slate-500 text-center">Allow Sage to index your code for deep semantic search</span>
+                </button>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between p-3 bg-emerald-500/5 border border-emerald-500/10 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <CheckCircle className="w-5 h-5 text-emerald-500" />
+                      <div>
+                        <p className="text-sm font-medium text-emerald-400">Workspace Connected</p>
+                        <p className="text-xs text-emerald-500/70">{indexedCount} files loaded securely</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleConnectLocal}
+                      className="p-1.5 hover:bg-emerald-500/20 rounded-md text-emerald-500 transition-colors"
+                      title="Reload Workspace"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Deep Insights Quick Questions */}
+            <div className="px-6 py-5">
+              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+                <Search className="w-3 h-3" /> Explore Architecture
+              </h3>
+              <div className="flex flex-col gap-2">
+                {QUICK_QUESTIONS.map((q, i) => (
+                  <button
+                    key={i}
+                    onClick={() => handleSendMessage(q)}
+                    disabled={isProcessing}
+                    className="flex items-center justify-between w-full text-left text-sm text-slate-300 bg-[#1e1e1e] hover:bg-[#2a2a2a] border border-[#333] hover:border-purple-500/30 px-4 py-3 rounded-xl transition-all disabled:opacity-50 group"
+                  >
+                    <span>{q}</span>
+                    <Send className="w-3 h-3 text-slate-600 group-hover:text-purple-400 transition-colors" />
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* File Tree Browser */}
+            <div className="flex-1 flex flex-col min-h-0 border-t border-[#2a2a2a]">
+              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider p-6 pb-2 flex items-center gap-2">
+                <FolderTree className="w-3 h-3" /> Indexed Files
+              </h3>
+              <div className="flex-1 overflow-y-auto px-4 pb-4 custom-scrollbar">
+                {localFiles.length > 0 ? (
+                  localFiles.map((entry, i) => (
+                    <FileTreeItem key={i} entry={entry} />
+                  ))
+                ) : (
+                  <div className="text-center text-slate-500 text-sm py-8 px-4">
+                    <p>Connect a workspace to browse the source tree</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Show Panel Button (when hidden) */}
+        {!showFileTree && (
+          <button
+            onClick={() => setShowFileTree(true)}
+            className="absolute right-4 top-4 z-10 p-3 rounded-xl bg-[#1e1e1e] border border-[#333] shadow-xl hover:bg-[#2a2a2a] hover:border-purple-500/50 text-slate-400 hover:text-purple-400 transition-all group"
+            title="Show Code Intelligence Panel"
+          >
+            <Brain className="w-5 h-5 group-hover:scale-110 transition-transform" />
+          </button>
+        )}
       </div>
 
       {/* Right Panel - Agent Cards */}

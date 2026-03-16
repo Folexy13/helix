@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useRef, useEffect } from 'react';
@@ -293,10 +294,10 @@ export default function ChatInterface({
       </div>
 
       {/* Suggestions - show when there's a checkpoint with suggestions */}
-      {latestCheckpoint?.metadata?.suggestions && latestCheckpoint.metadata.suggestions.length > 0 && !isProcessing && (
+      {latestCheckpoint?.suggestions && latestCheckpoint.suggestions.length > 0 && !isProcessing && (
         <div className="border-t border-[#333] bg-[#212121] px-4 py-3">
           <div className="max-w-[48rem] mx-auto flex flex-wrap gap-2">
-            {latestCheckpoint.metadata.suggestions.map((suggestion: string, i: number) => (
+            {latestCheckpoint.suggestions.map((suggestion, i) => (
               <button
                 key={i}
                 onClick={() => {

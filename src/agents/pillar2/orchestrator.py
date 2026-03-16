@@ -334,7 +334,8 @@ SUGGESTIONS:
                     gate_type=HITLGateType.TASK_INTAKE,
                     prompt=answer_text,
                     options=[HITLDecision.APPROVE],
-                    metadata={"next_agent": "planner", "answered_question": True, "suggestions": suggestions},
+                    metadata={"next_agent": "planner", "answered_question": True},
+                    suggestions=suggestions,
                 )
                 return self.format_response(
                     content=answer_text,
@@ -371,7 +372,8 @@ SUGGESTIONS:
                     gate_type=HITLGateType.TASK_INTAKE,
                     prompt=prompt_to_show,
                     options=[HITLDecision.APPROVE],
-                    metadata={"next_agent": "planner", "suggestions": suggestions},
+                    metadata={"next_agent": "planner"},
+                    suggestions=suggestions,
                 )
                 return self.format_response(
                     content=prompt_to_show,
@@ -411,7 +413,8 @@ SUGGESTIONS:
                     gate_type=HITLGateType.TASK_INTAKE,
                     prompt=answer_text,
                     options=[HITLDecision.APPROVE],
-                    metadata={"next_agent": "planner", "suggestions": suggestions},
+                    metadata={"next_agent": "planner"},
+                    suggestions=suggestions,
                 )
                 return self.format_response(
                     content=answer_text,

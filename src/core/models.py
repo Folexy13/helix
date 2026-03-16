@@ -152,6 +152,7 @@ class HITLCheckpoint(BaseModel):
     user_input: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     resolved_at: Optional[datetime] = None
+    suggestions: Optional[List[str]] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     
     @property

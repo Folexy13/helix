@@ -344,6 +344,7 @@ JSON RESPONSE:"""
         prompt: str,
         options: List[HITLDecision],
         metadata: Optional[Dict[str, Any]] = None,
+        suggestions: Optional[List[str]] = None,
     ) -> HITLCheckpoint:
         """
         Create a Human-in-the-Loop checkpoint.
@@ -366,6 +367,7 @@ JSON RESPONSE:"""
             prompt=prompt,
             options=options,
             metadata=metadata or {},
+            suggestions=suggestions,
         )
         
         logger.info(f"HITL checkpoint created: {gate_type.value} by {self.name}")

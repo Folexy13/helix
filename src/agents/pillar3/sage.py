@@ -417,21 +417,23 @@ class SageAgent(BaseAgent):
             # Low confidence - escalate to user (HITL Gate 3.3)
             checkpoint = self.create_hitl_checkpoint(
                 gate_type=HITLGateType.UNCERTAINTY_ESCALATION,
-                prompt=f"""I'm not confident I found the right code for your question:
+                prompt=f"""I'm not confident I found the exact code for your question:
 
 **Your Question:** {context.user_input}
 
-I found some potentially related code, but the relevance scores are low.
-Could you:
-1. Rephrase your question with more specific terms?
-2. Mention specific file names or function names?
-3. Provide more context about what you're looking for?""",
+I found some potentially related code, but the semantic relevance scores are low. To give you the best architectural insight, how would you like to proceed?""",
                 options=[HITLDecision.APPROVE],  # User provides clarification
                 metadata={"low_confidence": True, "best_score": results[0].score if results else 0},
+                suggestions=[
+                    "Can you search for specific file names or function names instead?",
+                    "Broaden the search to the entire directory.",
+                    "Let's trace the dependencies of the main entry point.",
+                    "Nevermind, I'll provide more context."
+                ]
             )
             
             return self.format_response(
-                content="I need some clarification to give you an accurate answer.",
+                content="I need some clarification to give you an accurate architectural answer.",
                 hitl_checkpoint=checkpoint,
                 metadata={"confidence": "low"},
             )
@@ -440,7 +442,7 @@ Could you:
         code_context = self.rag.format_context_for_prompt(results)
         
         # Build the answer prompt
-        answer_prompt = f"""Answer the following question about the codebase:
+        answer_prompt = f"""Answer the following question about the codebase as an elite principal software engineer:
 
 ## Question:
 {context.user_input}
@@ -448,12 +450,17 @@ Could you:
 ## Relevant Code from the Codebase:
 {code_context}
 
-Please provide a comprehensive answer that:
-1. Directly addresses the question
-2. References specific files and line numbers
-3. Shows relevant code snippets
-4. Explains the reasoning and context
-5. Suggests related areas to explore
+Please provide a highly sophisticated, comprehensive architectural answer that:
+1. Directly addresses the question using advanced engineering terminology.
+2. References specific files and line numbers meticulously.
+3. Shows relevant code snippets formatted clearly.
+4. Explains the underlying design patterns, data flow, and architectural reasoning.
+5. Identifies potential security vulnerabilities, performance bottlenecks, or code-smells if any exist.
+6. Suggests exactly 3 related deep-dive questions the user might want to explore next, formatted at the very end as:
+SUGGESTIONS:
+- Suggestion 1
+- Suggestion 2
+- Suggestion 3
 
 If you're uncertain about any part, say so clearly."""
 
@@ -465,12 +472,32 @@ If you're uncertain about any part, say so clearly."""
                 use_tools=True,
             )
             
-            answer = response.get("text", "")
+            answer_text = response.get("text", "")
             reasoning = response.get("reasoning", "")
             
-            return self.format_response(
-                content=answer,
-                reasoning=reasoning,
+            # Extract suggestions from the generated answer
+            suggestions = []
+            if "SUGGESTIONS:" in answer_text:
+                parts = answer_text.split("SUGGESTIONS:")
+                answer_text = parts[0].strip()
+                lines = parts[1].strip().split("\n")
+                for line in lines:
+                    clean_line = line.strip().lstrip("-").lstrip("•").strip()
+                    if clean_line:
+                        suggestions.append(clean_line)
+                        
+            # If no suggestions were generated, provide default follow-ups
+            if not suggestions:
+                suggestions = [
+                    "Can you explain the data flow in more detail?",
+                    "Are there any security implications here?",
+                    "How can I test this specific component?"
+                ]
+
+            checkpoint = self.create_hitl_checkpoint(
+                gate_type=HITLGateType.CONTEXT_CONFIRMATION,
+                prompt=answer_text,
+                options=[HITLDecision.APPROVE],
                 metadata={
                     "confidence": "high" if results[0].score > 0.7 else "medium",
                     "sources": [
@@ -479,6 +506,14 @@ If you're uncertain about any part, say so clearly."""
                     ],
                     "index_stats": self.rag.get_index_stats(),
                 },
+                suggestions=suggestions
+            )
+            
+            return self.format_response(
+                content=answer_text,
+                reasoning=reasoning,
+                hitl_checkpoint=checkpoint,
+                metadata={"confidence": "high" if results[0].score > 0.7 else "medium"},
             )
             
         except Exception as e:
